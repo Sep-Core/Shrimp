@@ -1,19 +1,38 @@
-const stateEl = document.getElementById("state");
-const serverUrlEl = document.getElementById("server-url");
-const reconnectBtn = document.getElementById("reconnect-btn");
+const DEFAULT_SETTINGS = {
+  apiUrl: "http://127.0.0.1:3000/coordinate",
+  coordinateBasis: "auto",
+  pollMs: 80,
+  spotlightRadius: 180,
+  showDebugBox: true
+};
 
-function refreshStatus() {
-  chrome.runtime.sendMessage({ type: "get_status" }, (response) => {
-    if (!response) return;
-    stateEl.textContent = response.state ?? "unknown";
-    if (response.url) serverUrlEl.textContent = response.url;
-  });
-}
+const apiUrlEl = document.getElementById("api-url");
+const basisEl = document.getElementById("basis");
+const pollMsEl = document.getElementById("poll-ms");
+const radiusEl = document.getElementById("radius");
+const debugBoxEl = document.getElementById("show-debug-box");
+const statusEl = document.getElementById("status");
+const saveBtn = document.getElementById("save-btn");
 
-reconnectBtn.addEventListener("click", () => {
-  chrome.runtime.sendMessage({ type: "reconnect" }, () => {
-    setTimeout(refreshStatus, 300);
-  });
+chrome.storage.local.get(DEFAULT_SETTINGS, (stored) => {
+  const settings = { ...DEFAULT_SETTINGS, ...stored };
+  apiUrlEl.value = settings.apiUrl;
+  basisEl.value = settings.coordinateBasis;
+  pollMsEl.value = String(settings.pollMs);
+  radiusEl.value = String(settings.spotlightRadius);
+  debugBoxEl.checked = Boolean(settings.showDebugBox);
 });
 
-refreshStatus();
+saveBtn.addEventListener("click", () => {
+  const data = {
+    apiUrl: apiUrlEl.value.trim(),
+    coordinateBasis: basisEl.value,
+    pollMs: Math.max(30, Number(pollMsEl.value) || DEFAULT_SETTINGS.pollMs),
+    spotlightRadius: Math.max(60, Number(radiusEl.value) || DEFAULT_SETTINGS.spotlightRadius),
+    showDebugBox: debugBoxEl.checked
+  };
+
+  chrome.storage.local.set(data, () => {
+    statusEl.textContent = "Saved. Refresh target page if needed.";
+  });
+});

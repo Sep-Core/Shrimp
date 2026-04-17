@@ -1,23 +1,56 @@
-import asyncio
 import json
 import os
+import threading
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
+from urllib.parse import parse_qs, urlparse
 
 import cv2
 import mediapipe as mp
-import websockets
 
 
-HOST = "127.0.0.1"
-PORT = int(os.getenv("EYE_SERVER_PORT", "8765"))
+HOST = os.getenv("EYE_SERVER_HOST", "127.0.0.1")
+PORT = int(os.getenv("EYE_SERVER_PORT", "3000"))
+ENDPOINT = os.getenv("EYE_SERVER_ENDPOINT", "/coordinate")
 SEND_INTERVAL_SECONDS = 0.03
+COORD_FORMAT = os.getenv("EYE_COORD_FORMAT", "object").lower()
+COORD_WIDTH = int(os.getenv("EYE_COORD_WIDTH", "1920"))
+COORD_HEIGHT = int(os.getenv("EYE_COORD_HEIGHT", "1080"))
 MODEL_URL = (
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
   "face_landmarker/float16/latest/face_landmarker.task"
 )
 MODEL_PATH = Path(__file__).parent / "models" / "face_landmarker.task"
+
+
+class CoordinateStore:
+  def __init__(self) -> None:
+    self._lock = threading.Lock()
+    self._coord = {
+      "x_norm": 0.5,
+      "y_norm": 0.5,
+      "x": COORD_WIDTH // 2,
+      "y": COORD_HEIGHT // 2,
+      "confidence": 0.0,
+    }
+
+  def update(self, x_norm: float, y_norm: float, confidence: float) -> None:
+    x_norm = max(0.0, min(1.0, x_norm))
+    y_norm = max(0.0, min(1.0, y_norm))
+    with self._lock:
+      self._coord = {
+        "x_norm": x_norm,
+        "y_norm": y_norm,
+        "x": int(round(x_norm * COORD_WIDTH)),
+        "y": int(round(y_norm * COORD_HEIGHT)),
+        "confidence": confidence,
+      }
+
+  def get(self) -> dict:
+    with self._lock:
+      return dict(self._coord)
 
 
 class GazeTracker:
@@ -33,7 +66,6 @@ class GazeTracker:
     self.latest = {"x": 0.5, "y": 0.5, "confidence": 0.0}
 
   def _init_mediapipe(self) -> None:
-    # Newer mediapipe on Python 3.13 exposes only tasks APIs.
     if hasattr(mp, "solutions"):
       self.backend = "solutions"
       self.face_mesh = mp.solutions.face_mesh.FaceMesh(
@@ -89,12 +121,7 @@ class GazeTracker:
 
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     lm = self._extract_landmarks(rgb)
-    if lm is None:
-      self.latest["confidence"] = 0.0
-      return self.latest
-
-    # Some models may return only 468 landmarks; iris points then do not exist.
-    if len(lm) < 478:
+    if lm is None or len(lm) < 478:
       self.latest["confidence"] = 0.0
       return self.latest
 
@@ -136,7 +163,6 @@ class GazeTracker:
     x = (left_x_ratio + right_x_ratio) / 2.0
     y = (left_y_ratio + right_y_ratio) / 2.0
 
-    # Light smoothing to make the box movement less jittery.
     alpha = 0.25
     smoothed_x = self.latest["x"] * (1 - alpha) + x * alpha
     smoothed_y = self.latest["y"] * (1 - alpha) + y * alpha
@@ -165,62 +191,109 @@ class GazeTracker:
       self.face_landmarker.close()
 
 
-class EyeServer:
-  def __init__(self) -> None:
-    self.clients = set()
-    self.tracker = GazeTracker()
-
-  async def handler(self, websocket):
-    self.clients.add(websocket)
-    try:
-      async for _ in websocket:
-        # This demo server is push-only.
-        pass
-    finally:
-      self.clients.discard(websocket)
-
-  async def producer_loop(self) -> None:
-    while True:
-      payload = self.tracker.read_gaze()
-      if payload is not None and self.clients:
-        message = json.dumps(payload)
-        dead = []
-        for client in self.clients:
-          try:
-            await client.send(message)
-          except Exception:
-            dead.append(client)
-        for client in dead:
-          self.clients.discard(client)
-
-      await asyncio.sleep(SEND_INTERVAL_SECONDS)
-
-  async def run(self):
-    try:
-      async with websockets.serve(self.handler, HOST, PORT):
-        print(f"[eye-server] ws://{HOST}:{PORT} started")
-        print("[eye-server] keep this process running while extension is active")
-        await self.producer_loop()
-    except OSError as err:
-      if err.errno == 10048:
-        raise RuntimeError(
-          f"Port {PORT} is already in use. Another eye_server may still be running."
-        ) from err
-      raise
+def build_payload(coord: dict, response_format: str):
+  x = coord["x"]
+  y = coord["y"]
+  if response_format == "nested":
+    return {"coordinate": {"x": x, "y": y}}
+  if response_format == "array":
+    return [x, y]
+  if response_format == "text":
+    return f"{x},{y}"
+  return {"x": x, "y": y}
 
 
-async def main():
-  server = EyeServer()
+def make_handler(store: CoordinateStore):
+  class CoordinateHandler(BaseHTTPRequestHandler):
+    def _write_json(self, payload):
+      body = json.dumps(payload).encode("utf-8")
+      self.send_response(200)
+      self.send_header("Content-Type", "application/json; charset=utf-8")
+      self.send_header("Access-Control-Allow-Origin", "*")
+      self.send_header("Cache-Control", "no-store")
+      self.send_header("Content-Length", str(len(body)))
+      self.end_headers()
+      self.wfile.write(body)
+
+    def _write_text(self, text: str):
+      body = text.encode("utf-8")
+      self.send_response(200)
+      self.send_header("Content-Type", "text/plain; charset=utf-8")
+      self.send_header("Access-Control-Allow-Origin", "*")
+      self.send_header("Cache-Control", "no-store")
+      self.send_header("Content-Length", str(len(body)))
+      self.end_headers()
+      self.wfile.write(body)
+
+    def do_GET(self):
+      parsed = urlparse(self.path)
+      if parsed.path == "/health":
+        self._write_json({"ok": True})
+        return
+
+      if parsed.path != ENDPOINT:
+        self.send_response(404)
+        self.end_headers()
+        return
+
+      query = parse_qs(parsed.query)
+      response_format = query.get("format", [COORD_FORMAT])[0].lower()
+      payload = build_payload(store.get(), response_format)
+      if isinstance(payload, str):
+        self._write_text(payload)
+      else:
+        self._write_json(payload)
+
+    def log_message(self, _format, *_args):
+      return
+
+  return CoordinateHandler
+
+
+def run_tracking_loop(store: CoordinateStore, stop_event: threading.Event):
+  tracker = GazeTracker()
   try:
-    await server.run()
-  except RuntimeError as err:
-    print(f"[eye-server] {err}")
-    print("[eye-server] Tips:")
-    print("[eye-server] 1) stop old process: taskkill /PID <pid> /F")
-    print("[eye-server] 2) or choose another port: set EYE_SERVER_PORT=8766")
+    while not stop_event.is_set():
+      gaze = tracker.read_gaze()
+      if gaze:
+        store.update(gaze["x"], gaze["y"], gaze["confidence"])
+      stop_event.wait(SEND_INTERVAL_SECONDS)
   finally:
-    server.tracker.close()
+    tracker.close()
+
+
+def main():
+  store = CoordinateStore()
+  stop_event = threading.Event()
+
+  tracking_thread = threading.Thread(
+    target=run_tracking_loop, args=(store, stop_event), daemon=True
+  )
+  tracking_thread.start()
+
+  handler_cls = make_handler(store)
+  server = ThreadingHTTPServer((HOST, PORT), handler_cls)
+  print(f"[eye-server] http://{HOST}:{PORT}{ENDPOINT} started")
+  print("[eye-server] coordinate formats: object | nested | array | text")
+  print("[eye-server] set default format via EYE_COORD_FORMAT")
+
+  try:
+    server.serve_forever()
+  except KeyboardInterrupt:
+    print("[eye-server] stopping...")
+  except OSError as err:
+    if err.errno == 10048:
+      print(
+        f"[eye-server] Port {PORT} is already in use. "
+        "Stop old process or set EYE_SERVER_PORT."
+      )
+    else:
+      raise
+  finally:
+    stop_event.set()
+    server.server_close()
+    tracking_thread.join(timeout=2)
 
 
 if __name__ == "__main__":
-  asyncio.run(main())
+  main()

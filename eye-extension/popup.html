@@ -2,15 +2,26 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Python Gaze Demo</title>
+    <title>Shrimp Debug Tool</title>
     <style>
       body {
         font-family: Arial, sans-serif;
         margin: 12px;
-        width: 280px;
+        width: 320px;
       }
-      .status {
+      .row {
         margin-bottom: 10px;
+      }
+      label {
+        display: block;
+        font-size: 12px;
+        margin-bottom: 4px;
+      }
+      input,
+      select {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 6px 8px;
       }
       code {
         background: #f3f3f3;
@@ -26,12 +37,42 @@
         color: #fff;
         cursor: pointer;
       }
+      .hint {
+        font-size: 12px;
+        color: #555;
+      }
     </style>
   </head>
   <body>
-    <div class="status">Status: <strong id="state">unknown</strong></div>
-    <div style="margin-bottom: 10px">Server: <code id="server-url">ws://127.0.0.1:8765</code></div>
-    <button id="reconnect-btn">Reconnect</button>
+    <div class="row">
+      <label for="api-url">Coordinate API URL</label>
+      <input id="api-url" type="text" placeholder="http://127.0.0.1:3000/coordinate" />
+    </div>
+    <div class="row">
+      <label for="basis">Coordinate Basis</label>
+      <select id="basis">
+        <option value="auto">auto (viewport first)</option>
+        <option value="viewport">viewport</option>
+        <option value="document">document</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="poll-ms">Poll Interval (ms)</label>
+      <input id="poll-ms" type="number" min="30" step="10" />
+    </div>
+    <div class="row">
+      <label for="radius">Spotlight Radius (px)</label>
+      <input id="radius" type="number" min="60" step="10" />
+    </div>
+    <div class="row">
+      <label><input id="show-debug-box" type="checkbox" /> Show red debug box</label>
+    </div>
+    <button id="save-btn">Save</button>
+    <p class="hint">
+      Compatible input formats: <code>{"x":320,"y":240}</code>,
+      <code>{"coordinate":{"x":320,"y":240}}</code>, <code>[320,240]</code>, <code>320,240</code>.
+    </p>
+    <p class="hint" id="status">Not saved yet</p>
     <script src="popup.js"></script>
   </body>
 </html>
