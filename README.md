@@ -13,6 +13,20 @@ pip install -r requirements.txt
 python eye_server.py
 ```
 
+如需显示摄像头画面和关键点叠加层：
+
+```powershell
+python eye_server.py --preview
+```
+
+可指定摄像头索引：
+
+```powershell
+python eye_server.py --preview --camera-index 1
+```
+
+预览窗口按 `Q` 或 `Esc` 可退出。
+
 默认地址：
 
 - `http://127.0.0.1:3000/coordinate`

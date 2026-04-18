@@ -255,3 +255,28 @@ curl "http://127.0.0.1:3000/coordinate?format=object&debug=1"
 # 查看校准状态
 curl "http://127.0.0.1:3000/calibration"
 ```
+
+---
+
+## 7) 可视化预览启动参数（后端）
+
+后端支持启动时打开摄像头预览窗口，并叠加关键点与估计视线点：
+
+```powershell
+python python-eye-server/eye_server.py --preview
+```
+
+可选参数：
+
+- `--camera-index <int>`：选择摄像头索引（默认 `0`）
+
+示例：
+
+```powershell
+python python-eye-server/eye_server.py --preview --camera-index 1
+```
+
+说明：
+
+- 预览窗口显示关键眼部点与当前估计坐标
+- 按 `Q` 或 `Esc` 可退出后端进程

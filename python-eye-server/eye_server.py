@@ -3,6 +3,7 @@ import os
 import threading
 import time
 import urllib.request
+import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
@@ -20,6 +21,7 @@ COORD_FORMAT = os.getenv("EYE_COORD_FORMAT", "object").lower()
 COORD_WIDTH = int(os.getenv("EYE_COORD_WIDTH", "1920"))
 COORD_HEIGHT = int(os.getenv("EYE_COORD_HEIGHT", "1080"))
 FLIP_X = os.getenv("EYE_FLIP_X", "1").lower() not in {"0", "false", "no", "off"}
+CAMERA_INDEX = int(os.getenv("EYE_CAMERA_INDEX", "0"))
 MODEL_URL = (
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
   "face_landmarker/float16/latest/face_landmarker.task"
@@ -177,15 +179,19 @@ class CoordinateStore:
 
 
 class GazeTracker:
-  def __init__(self) -> None:
+  def __init__(self, camera_index: int = 0, preview_enabled: bool = False) -> None:
     self.backend = "tasks"
     self.face_mesh = None
     self.face_landmarker = None
     self.mp_image = None
+    self.preview_enabled = preview_enabled
+    self.preview_window_name = "Eye Server Preview"
+    self.preview_keypoints = []
+    self.last_preview_frame = None
     self._init_mediapipe()
-    self.cap = cv2.VideoCapture(0)
+    self.cap = cv2.VideoCapture(camera_index)
     if not self.cap.isOpened():
-      raise RuntimeError("Cannot open camera. Please check camera permission/device.")
+      raise RuntimeError(f"Cannot open camera index {camera_index}. Please check camera permission/device.")
     self.latest = {"x": 0.5, "y": 0.5, "confidence": 0.0, "backend": self.backend}
 
   def _init_mediapipe(self) -> None:
@@ -241,9 +247,13 @@ class GazeTracker:
       return None
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     lm = self._extract_landmarks(rgb)
+    self.preview_keypoints = []
     if lm is None or len(lm) < 478:
       self.latest["confidence"] = 0.0
+      self._update_preview_frame(frame, found_face=False)
       return self.latest
+
+    self.preview_keypoints = self._build_preview_points(lm)
     left_iris_x, left_iris_y = self._avg_landmark(lm, [468, 469, 470, 471, 472])
     right_iris_x, right_iris_y = self._avg_landmark(lm, [473, 474, 475, 476, 477])
     left_corner_outer_x = lm[33].x
@@ -276,6 +286,7 @@ class GazeTracker:
     smoothed_x = self.latest["x"] * (1 - alpha) + x * alpha
     smoothed_y = self.latest["y"] * (1 - alpha) + y * alpha
     self.latest = {"x": smoothed_x, "y": smoothed_y, "confidence": 1.0, "backend": self.backend}
+    self._update_preview_frame(frame, found_face=True)
     return self.latest
 
   def _extract_landmarks(self, rgb_frame):
@@ -296,6 +307,71 @@ class GazeTracker:
       self.face_mesh.close()
     if self.face_landmarker is not None:
       self.face_landmarker.close()
+    if self.preview_enabled:
+      cv2.destroyAllWindows()
+
+  def _build_preview_points(self, landmarks):
+    important_indices = [
+      33, 133, 159, 145, 362, 263, 386, 374, 468, 469, 470, 471, 472, 473, 474, 475, 476, 477
+    ]
+    return [{"x": landmarks[i].x, "y": landmarks[i].y} for i in important_indices]
+
+  def _update_preview_frame(self, frame, found_face: bool):
+    if not self.preview_enabled:
+      return
+
+    canvas = frame.copy()
+    h, w = canvas.shape[:2]
+    if found_face:
+      for pt in self.preview_keypoints:
+        px = int(max(0, min(w - 1, pt["x"] * w)))
+        py = int(max(0, min(h - 1, pt["y"] * h)))
+        cv2.circle(canvas, (px, py), 2, (0, 255, 255), -1)
+
+      gx = int(max(0, min(w - 1, self.latest["x"] * w)))
+      gy = int(max(0, min(h - 1, self.latest["y"] * h)))
+      cv2.circle(canvas, (gx, gy), 8, (0, 0, 255), 2)
+      cv2.putText(
+        canvas,
+        f"gaze=({self.latest['x']:.3f},{self.latest['y']:.3f}) conf={self.latest['confidence']:.2f}",
+        (12, 24),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (0, 255, 0),
+        1,
+        cv2.LINE_AA,
+      )
+    else:
+      cv2.putText(
+        canvas,
+        "No face detected",
+        (12, 24),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (0, 0, 255),
+        2,
+        cv2.LINE_AA,
+      )
+
+    cv2.putText(
+      canvas,
+      "Press Q / ESC to quit",
+      (12, h - 12),
+      cv2.FONT_HERSHEY_SIMPLEX,
+      0.5,
+      (255, 255, 255),
+      1,
+      cv2.LINE_AA,
+    )
+    self.last_preview_frame = canvas
+
+  def render_preview(self, stop_event: threading.Event):
+    if not self.preview_enabled or self.last_preview_frame is None:
+      return
+    cv2.imshow(self.preview_window_name, self.last_preview_frame)
+    key = cv2.waitKey(1) & 0xFF
+    if key in (27, ord("q"), ord("Q")):
+      stop_event.set()
 
 
 def build_payload(mapped: dict, response_format: str):
@@ -472,25 +548,40 @@ def make_handler(store: CoordinateStore, calibration_store: CalibrationStore):
   return CoordinateHandler
 
 
-def run_tracking_loop(store: CoordinateStore, stop_event: threading.Event):
-  tracker = GazeTracker()
+def run_tracking_loop(store: CoordinateStore, stop_event: threading.Event, camera_index: int, preview: bool):
+  tracker = GazeTracker(camera_index=camera_index, preview_enabled=preview)
   try:
     while not stop_event.is_set():
       gaze = tracker.read_gaze()
       if gaze:
         store.update(gaze["x"], gaze["y"], gaze["confidence"], gaze.get("backend", "unknown"))
+      tracker.render_preview(stop_event)
       stop_event.wait(SEND_INTERVAL_SECONDS)
   finally:
     tracker.close()
 
 
 def main():
+  parser = argparse.ArgumentParser(description="Shrimp eye tracking backend")
+  parser.add_argument(
+    "--preview",
+    action="store_true",
+    help="Show webcam preview with keypoint overlays (press Q/ESC to quit).",
+  )
+  parser.add_argument(
+    "--camera-index",
+    type=int,
+    default=CAMERA_INDEX,
+    help=f"Camera index for OpenCV (default: {CAMERA_INDEX}).",
+  )
+  args = parser.parse_args()
+
   store = CoordinateStore()
   calibration_store = CalibrationStore()
   stop_event = threading.Event()
 
   tracking_thread = threading.Thread(
-    target=run_tracking_loop, args=(store, stop_event), daemon=True
+    target=run_tracking_loop, args=(store, stop_event, args.camera_index, args.preview), daemon=True
   )
   tracking_thread.start()
 
@@ -500,6 +591,8 @@ def main():
   print("[eye-server] formats: object | nested | array | text | debug")
   print("[eye-server] calibration APIs: GET/POST /calibration, POST /calibration/reset")
   print(f"[eye-server] horizontal flip: {'on' if FLIP_X else 'off'} (EYE_FLIP_X)")
+  if args.preview:
+    print("[eye-server] preview enabled: webcam + keypoints overlay")
 
   try:
     server.serve_forever()
