@@ -24,15 +24,16 @@
 
 ---
 
-## 2) 坐标接口
+## 2) 坐标接口（基础 + 调试全量）
 
 ### Request
 
 `GET /coordinate`
 
-可选 query:
+可选 query：
 
-- `format=object|nested|array|text`
+- `format=object|nested|array|text|debug`
+- `debug=1` 或 `verbose=1`（任意基础格式下返回全量调试结构）
 
 ### 默认响应（object）
 
@@ -40,7 +41,7 @@
 {"x": 320, "y": 240}
 ```
 
-### 兼容响应格式
+### 基础兼容响应格式
 
 1. `object`
 
@@ -68,9 +69,59 @@
 
 > 说明：当前后端输出的是像素坐标（基于 `EYE_COORD_WIDTH` / `EYE_COORD_HEIGHT` 映射）。
 
+### 全量调试响应（推荐联调用）
+
+请求示例：
+
+`GET /coordinate?format=debug`
+
+或：
+
+`GET /coordinate?format=object&debug=1`
+
+响应示例（节选）：
+
+```json
+{
+  "ok": true,
+  "coordinate": {"x": 962, "y": 541},
+  "coordinate_norm": {"x": 0.501, "y": 0.501},
+  "confidence": 1.0,
+  "tracking": {
+    "backend": "tasks",
+    "sequence": 1267,
+    "last_update_ms": 1776500000000,
+    "age_ms": 24
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 3000,
+    "endpoint": "/coordinate",
+    "coord_width": 1920,
+    "coord_height": 1080,
+    "flip_x": true,
+    "default_format": "object"
+  },
+  "request": {
+    "path": "/coordinate",
+    "selected_format": "debug",
+    "query": {"format": ["debug"]},
+    "server_time_ms": 1776500000025
+  },
+  "compat": {
+    "object": {"x": 962, "y": 541},
+    "nested": {"coordinate": {"x": 962, "y": 541}},
+    "array": [962, 541],
+    "text": "962,541"
+  }
+}
+```
+
+这意味着前后端沟通里的关键数据（坐标、置信度、后端状态、请求参数回显、格式兼容结果）都能直接通过 API 拿到。
+
 ---
 
-## 3) 调试面板字段（前端插件）
+## 3) 调试面板字段（前端插件显示）
 
 页面右下角 debug panel 中主要字段：
 
@@ -88,7 +139,7 @@
 - `fallback`
   - `none|mouse|center|center-no-url`
 - `raw API`
-  - 接口原始坐标（未换算）
+  - 接口原始坐标（通常来自 API 的 `coordinate`）
 - `viewport`
   - 按 `basis` 换算到当前视口后的坐标
 - `mapped`
@@ -130,4 +181,10 @@ curl http://127.0.0.1:3000/coordinate
 
 # 嵌套格式
 curl "http://127.0.0.1:3000/coordinate?format=nested"
+
+# 全量调试格式
+curl "http://127.0.0.1:3000/coordinate?format=debug"
+
+# 基础格式 + 调试信息
+curl "http://127.0.0.1:3000/coordinate?format=object&debug=1"
 ```

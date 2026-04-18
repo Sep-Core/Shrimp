@@ -167,15 +167,15 @@ function parseCoordinate(payload) {
     return { x: Number(payload[0]), y: Number(payload[1]) };
   }
   if (payload && typeof payload === "object") {
-    if (typeof payload.x === "number" && typeof payload.y === "number") {
-      return { x: payload.x, y: payload.y };
-    }
     if (
       payload.coordinate &&
       typeof payload.coordinate.x === "number" &&
       typeof payload.coordinate.y === "number"
     ) {
       return { x: payload.coordinate.x, y: payload.coordinate.y };
+    }
+    if (typeof payload.x === "number" && typeof payload.y === "number") {
+      return { x: payload.x, y: payload.y };
     }
   }
   return null;

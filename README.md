@@ -43,6 +43,11 @@ python eye_server.py
 - `?format=nested`
 - `?format=array`
 - `?format=text`
+- `?format=debug`（返回全量调试信息，含置信度、时间戳、后端状态、兼容格式）
+
+也可以在任意格式后附加：
+
+- `?debug=1` 或 `?verbose=1`（返回全量调试结构）
 
 也可以通过环境变量设置默认格式：
 

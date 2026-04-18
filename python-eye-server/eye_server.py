@@ -1,6 +1,7 @@
 import json
 import os
 import threading
+import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -35,9 +36,12 @@ class CoordinateStore:
       "x": COORD_WIDTH // 2,
       "y": COORD_HEIGHT // 2,
       "confidence": 0.0,
+      "backend": "unknown",
+      "last_update_ms": int(time.time() * 1000),
+      "sequence": 0,
     }
 
-  def update(self, x_norm: float, y_norm: float, confidence: float) -> None:
+  def update(self, x_norm: float, y_norm: float, confidence: float, backend: str) -> None:
     x_norm = max(0.0, min(1.0, x_norm))
     y_norm = max(0.0, min(1.0, y_norm))
     with self._lock:
@@ -47,6 +51,9 @@ class CoordinateStore:
         "x": int(round(x_norm * COORD_WIDTH)),
         "y": int(round(y_norm * COORD_HEIGHT)),
         "confidence": confidence,
+        "backend": backend,
+        "last_update_ms": int(time.time() * 1000),
+        "sequence": self._coord["sequence"] + 1,
       }
 
   def get(self) -> dict:
@@ -64,7 +71,7 @@ class GazeTracker:
     self.cap = cv2.VideoCapture(0)
     if not self.cap.isOpened():
       raise RuntimeError("Cannot open camera. Please check camera permission/device.")
-    self.latest = {"x": 0.5, "y": 0.5, "confidence": 0.0}
+    self.latest = {"x": 0.5, "y": 0.5, "confidence": 0.0, "backend": self.backend}
 
   def _init_mediapipe(self) -> None:
     if hasattr(mp, "solutions"):
@@ -170,7 +177,7 @@ class GazeTracker:
     smoothed_x = self.latest["x"] * (1 - alpha) + x * alpha
     smoothed_y = self.latest["y"] * (1 - alpha) + y * alpha
 
-    self.latest = {"x": smoothed_x, "y": smoothed_y, "confidence": 1.0}
+    self.latest = {"x": smoothed_x, "y": smoothed_y, "confidence": 1.0, "backend": self.backend}
     return self.latest
 
   def _extract_landmarks(self, rgb_frame):
@@ -204,6 +211,44 @@ def build_payload(coord: dict, response_format: str):
   if response_format == "text":
     return f"{x},{y}"
   return {"x": x, "y": y}
+
+
+def build_debug_payload(coord: dict, selected_format: str, query: dict, request_path: str):
+  now_ms = int(time.time() * 1000)
+  age_ms = max(0, now_ms - int(coord.get("last_update_ms", now_ms)))
+  return {
+    "ok": True,
+    "coordinate": {"x": coord["x"], "y": coord["y"]},
+    "coordinate_norm": {"x": coord["x_norm"], "y": coord["y_norm"]},
+    "confidence": coord.get("confidence", 0.0),
+    "tracking": {
+      "backend": coord.get("backend", "unknown"),
+      "sequence": coord.get("sequence", 0),
+      "last_update_ms": coord.get("last_update_ms", now_ms),
+      "age_ms": age_ms,
+    },
+    "server": {
+      "host": HOST,
+      "port": PORT,
+      "endpoint": ENDPOINT,
+      "coord_width": COORD_WIDTH,
+      "coord_height": COORD_HEIGHT,
+      "flip_x": FLIP_X,
+      "default_format": COORD_FORMAT,
+    },
+    "request": {
+      "path": request_path,
+      "selected_format": selected_format,
+      "query": query,
+      "server_time_ms": now_ms,
+    },
+    "compat": {
+      "object": {"x": coord["x"], "y": coord["y"]},
+      "nested": {"coordinate": {"x": coord["x"], "y": coord["y"]}},
+      "array": [coord["x"], coord["y"]],
+      "text": f"{coord['x']},{coord['y']}",
+    },
+  }
 
 
 def make_handler(store: CoordinateStore):
@@ -241,7 +286,19 @@ def make_handler(store: CoordinateStore):
 
       query = parse_qs(parsed.query)
       response_format = query.get("format", [COORD_FORMAT])[0].lower()
-      payload = build_payload(store.get(), response_format)
+      coord = store.get()
+      debug_mode = (
+        response_format == "debug"
+        or query.get("debug", ["0"])[0].lower() in {"1", "true", "yes", "on"}
+        or query.get("verbose", ["0"])[0].lower() in {"1", "true", "yes", "on"}
+      )
+
+      if debug_mode:
+        payload = build_debug_payload(coord, response_format, query, parsed.path)
+        self._write_json(payload)
+        return
+
+      payload = build_payload(coord, response_format)
       if isinstance(payload, str):
         self._write_text(payload)
       else:
@@ -259,7 +316,7 @@ def run_tracking_loop(store: CoordinateStore, stop_event: threading.Event):
     while not stop_event.is_set():
       gaze = tracker.read_gaze()
       if gaze:
-        store.update(gaze["x"], gaze["y"], gaze["confidence"])
+        store.update(gaze["x"], gaze["y"], gaze["confidence"], gaze.get("backend", "unknown"))
       stop_event.wait(SEND_INTERVAL_SECONDS)
   finally:
     tracker.close()
@@ -277,7 +334,7 @@ def main():
   handler_cls = make_handler(store)
   server = ThreadingHTTPServer((HOST, PORT), handler_cls)
   print(f"[eye-server] http://{HOST}:{PORT}{ENDPOINT} started")
-  print("[eye-server] coordinate formats: object | nested | array | text")
+  print("[eye-server] coordinate formats: object | nested | array | text | debug")
   print("[eye-server] set default format via EYE_COORD_FORMAT")
   print(f"[eye-server] horizontal flip: {'on' if FLIP_X else 'off'} (EYE_FLIP_X)")
 
