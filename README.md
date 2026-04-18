@@ -84,6 +84,18 @@ set EYE_FLIP_X=0
 python eye_server.py
 ```
 
+可调上下灵敏度（默认已增强）：
+
+```powershell
+set EYE_VERTICAL_GAIN=1.8
+set EYE_Y_SMOOTHING=0.3
+python eye_server.py
+```
+
+说明：
+- `EYE_VERTICAL_GAIN` 越大，上下移动越敏感（建议 1.2 ~ 2.2）
+- `EYE_Y_SMOOTHING` 越小，响应更快但抖动更明显（建议 0.2 ~ 0.5）
+
 ## 4) 坐标基准说明（插件）
 
 插件支持三种坐标基准：

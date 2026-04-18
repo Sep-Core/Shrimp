@@ -22,11 +22,19 @@ COORD_WIDTH = int(os.getenv("EYE_COORD_WIDTH", "1920"))
 COORD_HEIGHT = int(os.getenv("EYE_COORD_HEIGHT", "1080"))
 FLIP_X = os.getenv("EYE_FLIP_X", "1").lower() not in {"0", "false", "no", "off"}
 CAMERA_INDEX = int(os.getenv("EYE_CAMERA_INDEX", "0"))
+EYE_VERTICAL_GAIN = float(os.getenv("EYE_VERTICAL_GAIN", "1.6"))
+EYE_X_SMOOTHING = float(os.getenv("EYE_X_SMOOTHING", "0.25"))
+EYE_Y_SMOOTHING = float(os.getenv("EYE_Y_SMOOTHING", "0.35"))
 MODEL_URL = (
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
   "face_landmarker/float16/latest/face_landmarker.task"
 )
 MODEL_PATH = Path(__file__).parent / "models" / "face_landmarker.task"
+
+LEFT_UPPER_LID_INDICES = [159, 160, 161, 246]
+LEFT_LOWER_LID_INDICES = [145, 144, 163, 7]
+RIGHT_UPPER_LID_INDICES = [386, 385, 384, 466]
+RIGHT_LOWER_LID_INDICES = [374, 380, 381, 382]
 
 
 def now_ms() -> int:
@@ -188,6 +196,7 @@ class GazeTracker:
     self.preview_window_name = "Eye Server Preview"
     self.preview_keypoints = []
     self.last_preview_frame = None
+    self.eye_opening_baseline = None
     self._init_mediapipe()
     self.cap = cv2.VideoCapture(camera_index)
     if not self.cap.isOpened():
@@ -260,10 +269,10 @@ class GazeTracker:
     left_corner_inner_x = lm[133].x
     right_corner_inner_x = lm[362].x
     right_corner_outer_x = lm[263].x
-    left_top_y = lm[159].y
-    left_bottom_y = lm[145].y
-    right_top_y = lm[386].y
-    right_bottom_y = lm[374].y
+    _, left_top_y = self._avg_landmark(lm, LEFT_UPPER_LID_INDICES)
+    _, left_bottom_y = self._avg_landmark(lm, LEFT_LOWER_LID_INDICES)
+    _, right_top_y = self._avg_landmark(lm, RIGHT_UPPER_LID_INDICES)
+    _, right_bottom_y = self._avg_landmark(lm, RIGHT_LOWER_LID_INDICES)
     left_x_ratio = self._ratio(
       left_iris_x,
       min(left_corner_outer_x, left_corner_inner_x),
@@ -279,12 +288,27 @@ class GazeTracker:
       right_iris_y, min(right_top_y, right_bottom_y), max(right_top_y, right_bottom_y)
     )
     x = (left_x_ratio + right_x_ratio) / 2.0
-    y = (left_y_ratio + right_y_ratio) / 2.0
+    y_raw = (left_y_ratio + right_y_ratio) / 2.0
+
+    # Improve vertical sensitivity with eyelid-opening adaptive gain.
+    left_opening = max(1e-4, left_bottom_y - left_top_y)
+    right_opening = max(1e-4, right_bottom_y - right_top_y)
+    opening = (left_opening + right_opening) / 2.0
+    if self.eye_opening_baseline is None:
+      self.eye_opening_baseline = opening
+    else:
+      self.eye_opening_baseline = self.eye_opening_baseline * 0.95 + opening * 0.05
+
+    openness_ratio = opening / max(1e-4, self.eye_opening_baseline)
+    adaptive_gain = EYE_VERTICAL_GAIN * max(0.85, min(1.2, openness_ratio))
+    y = 0.5 + (y_raw - 0.5) * adaptive_gain
+    y = max(0.0, min(1.0, y))
     if FLIP_X:
       x = 1.0 - x
-    alpha = 0.25
-    smoothed_x = self.latest["x"] * (1 - alpha) + x * alpha
-    smoothed_y = self.latest["y"] * (1 - alpha) + y * alpha
+    alpha_x = max(0.01, min(1.0, EYE_X_SMOOTHING))
+    alpha_y = max(0.01, min(1.0, EYE_Y_SMOOTHING))
+    smoothed_x = self.latest["x"] * (1 - alpha_x) + x * alpha_x
+    smoothed_y = self.latest["y"] * (1 - alpha_y) + y * alpha_y
     self.latest = {"x": smoothed_x, "y": smoothed_y, "confidence": 1.0, "backend": self.backend}
     self._update_preview_frame(frame, found_face=True)
     return self.latest
@@ -312,7 +336,12 @@ class GazeTracker:
 
   def _build_preview_points(self, landmarks):
     important_indices = [
-      33, 133, 159, 145, 362, 263, 386, 374, 468, 469, 470, 471, 472, 473, 474, 475, 476, 477
+      33, 133, 362, 263,
+      *LEFT_UPPER_LID_INDICES,
+      *LEFT_LOWER_LID_INDICES,
+      *RIGHT_UPPER_LID_INDICES,
+      *RIGHT_LOWER_LID_INDICES,
+      468, 469, 470, 471, 472, 473, 474, 475, 476, 477
     ]
     return [{"x": landmarks[i].x, "y": landmarks[i].y} for i in important_indices]
 
@@ -591,6 +620,10 @@ def main():
   print("[eye-server] formats: object | nested | array | text | debug")
   print("[eye-server] calibration APIs: GET/POST /calibration, POST /calibration/reset")
   print(f"[eye-server] horizontal flip: {'on' if FLIP_X else 'off'} (EYE_FLIP_X)")
+  print(
+    f"[eye-server] vertical tuning: gain={EYE_VERTICAL_GAIN}, "
+    f"x_smoothing={EYE_X_SMOOTHING}, y_smoothing={EYE_Y_SMOOTHING}"
+  )
   if args.preview:
     print("[eye-server] preview enabled: webcam + keypoints overlay")
 

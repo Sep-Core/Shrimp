@@ -222,6 +222,9 @@
 - `EYE_COORD_WIDTH`：坐标映射宽度，默认 `1920`
 - `EYE_COORD_HEIGHT`：坐标映射高度，默认 `1080`
 - `EYE_FLIP_X`：X 轴翻转，默认开启（`1`）
+- `EYE_VERTICAL_GAIN`：垂直灵敏度增益，默认 `1.6`
+- `EYE_X_SMOOTHING`：X 轴平滑系数，默认 `0.25`
+- `EYE_Y_SMOOTHING`：Y 轴平滑系数，默认 `0.35`
 
 示例（Windows PowerShell）：
 
