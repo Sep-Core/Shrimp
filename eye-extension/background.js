@@ -3,7 +3,8 @@ const DEFAULT_SETTINGS = {
   coordinateBasis: "auto",
   pollMs: 80,
   spotlightRadius: 180,
-  showDebugBox: true
+  showDebugBox: true,
+  showDebugPanel: false
 };
 
 chrome.runtime.onInstalled.addListener(() => {

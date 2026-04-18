@@ -4,19 +4,29 @@ const SETTINGS_DEFAULTS = {
   coordinateBasis: "auto",
   pollMs: 80,
   spotlightRadius: 180,
-  showDebugBox: true
+  showDebugBox: true,
+  showDebugPanel: false
 };
 
 let settings = { ...SETTINGS_DEFAULTS };
 let overlay = null;
 let debugBox = null;
 let statusTag = null;
+let debugPanel = null;
 let pollTimer = null;
 let lastMouseViewport = null;
 let latestRawViewportCoord = null;
 let calibration = null;
 let calibrationInProgress = false;
 let calibrationTarget = null;
+let debugState = {
+  source: "init",
+  rawApiCoord: null,
+  viewportCoord: null,
+  mappedCoord: null,
+  fallback: "none",
+  latencyMs: null
+};
 
 function ensureOverlay() {
   if (overlay && document.contains(overlay)) return;
@@ -63,14 +73,55 @@ function ensureOverlay() {
   statusTag.style.zIndex = "2147483647";
   statusTag.textContent = "Shrimp: ready";
 
+  debugPanel = document.createElement("pre");
+  debugPanel.id = "__shrimp_debug_panel";
+  debugPanel.style.position = "fixed";
+  debugPanel.style.right = "12px";
+  debugPanel.style.bottom = "12px";
+  debugPanel.style.maxWidth = "380px";
+  debugPanel.style.padding = "8px 10px";
+  debugPanel.style.background = "rgba(0, 0, 0, 0.72)";
+  debugPanel.style.color = "#9fffe0";
+  debugPanel.style.font = "11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+  debugPanel.style.whiteSpace = "pre";
+  debugPanel.style.borderRadius = "6px";
+  debugPanel.style.pointerEvents = "none";
+  debugPanel.style.zIndex = "2147483647";
+  debugPanel.style.display = settings.showDebugPanel ? "block" : "none";
+  debugPanel.textContent = "Shrimp debug panel";
+
   document.documentElement.appendChild(overlay);
   document.documentElement.appendChild(debugBox);
   document.documentElement.appendChild(statusTag);
+  document.documentElement.appendChild(debugPanel);
 }
 
 function setStatus(text) {
   ensureOverlay();
   statusTag.textContent = text;
+}
+
+function fmtCoord(coord) {
+  if (!coord) return "-";
+  return `${Math.round(coord.x)}, ${Math.round(coord.y)}`;
+}
+
+function updateDebugPanel() {
+  ensureOverlay();
+  if (!debugPanel) return;
+  debugPanel.style.display = settings.showDebugPanel ? "block" : "none";
+  if (!settings.showDebugPanel) return;
+  debugPanel.textContent =
+    `Shrimp Debug\n` +
+    `source: ${debugState.source}\n` +
+    `basis: ${settings.coordinateBasis}\n` +
+    `pollMs: ${settings.pollMs}\n` +
+    `latencyMs: ${debugState.latencyMs ?? "-"}\n` +
+    `fallback: ${debugState.fallback}\n` +
+    `raw API: ${fmtCoord(debugState.rawApiCoord)}\n` +
+    `viewport: ${fmtCoord(debugState.viewportCoord)}\n` +
+    `mapped: ${fmtCoord(debugState.mappedCoord)}\n` +
+    `calibration: ${calibration?.enabled ? "on" : "off"}`;
 }
 
 function sleep(ms) {
@@ -92,6 +143,8 @@ function applySpotlight(x, y) {
   } else {
     debugBox.style.display = "none";
   }
+  debugState.mappedCoord = { x: cx, y: cy };
+  updateDebugPanel();
 }
 
 function applyCalibration(coord) {
@@ -150,6 +203,36 @@ function toViewportCoordinate(coord) {
 function fallbackFocusPoint() {
   if (lastMouseViewport) return lastMouseViewport;
   return { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+}
+
+async function fetchApiCoordinateRaw() {
+  const startedAt = performance.now();
+  const response = await fetch(settings.apiUrl, { cache: "no-store" });
+  const text = await response.text();
+
+  let coord = null;
+  try {
+    const jsonPayload = JSON.parse(text);
+    coord = parseCoordinate(jsonPayload);
+  } catch (_err) {
+    coord = parseCoordinateFromText(text);
+  }
+
+  if (!coord || !Number.isFinite(coord.x) || !Number.isFinite(coord.y)) {
+    return {
+      ok: false,
+      latencyMs: Math.round(performance.now() - startedAt),
+      error: "invalid-coordinate"
+    };
+  }
+
+  const viewportRaw = toViewportCoordinate(coord);
+  return {
+    ok: true,
+    rawApiCoord: coord,
+    viewportRaw,
+    latencyMs: Math.round(performance.now() - startedAt)
+  };
 }
 
 function solve3x3(matrix, vector) {
@@ -277,7 +360,26 @@ async function collectSamples(durationMs = 900) {
   const samples = [];
   const started = Date.now();
   while (Date.now() - started < durationMs) {
-    if (latestRawViewportCoord) {
+    if (settings.apiUrl) {
+      try {
+        const result = await fetchApiCoordinateRaw();
+        if (result.ok) {
+          latestRawViewportCoord = result.viewportRaw;
+          samples.push({ ...result.viewportRaw });
+          debugState = {
+            ...debugState,
+            source: "calibration",
+            fallback: "none",
+            rawApiCoord: result.rawApiCoord,
+            viewportCoord: result.viewportRaw,
+            latencyMs: result.latencyMs
+          };
+          updateDebugPanel();
+        }
+      } catch (_err) {
+        // Ignore occasional request failures during calibration sampling.
+      }
+    } else if (latestRawViewportCoord) {
       samples.push({ ...latestRawViewportCoord });
     }
     await sleep(45);
@@ -309,6 +411,10 @@ async function runCalibration() {
       moveCalibrationTarget(t);
       applySpotlight(t.x, t.y);
       setStatus(`Calibrating ${i + 1}/${targets.length}: stare at blue dot`);
+      debugState.source = "calibration";
+      debugState.fallback = "none";
+      debugState.mappedCoord = { ...t };
+      updateDebugPanel();
       await sleep(500);
       const raw = await collectSamples(900);
       if (!raw) {
@@ -340,42 +446,65 @@ function resetCalibration() {
   calibration = null;
   chrome.storage.local.remove("calibration");
   setStatus("Shrimp: calibration reset");
+  updateDebugPanel();
 }
 
 async function fetchCoordinate() {
   if (!settings.apiUrl) {
     setStatus("Shrimp: set API URL in popup");
+    debugState = {
+      ...debugState,
+      source: "config",
+      fallback: "center-no-url",
+      rawApiCoord: null,
+      viewportCoord: null,
+      latencyMs: null
+    };
     applySpotlight(window.innerWidth / 2, window.innerHeight / 2);
     return;
   }
 
   try {
-    const response = await fetch(settings.apiUrl, { cache: "no-store" });
-    const text = await response.text();
-    let coord = null;
-
-    try {
-      const jsonPayload = JSON.parse(text);
-      coord = parseCoordinate(jsonPayload);
-    } catch (_err) {
-      coord = parseCoordinateFromText(text);
-    }
-
-    if (!coord || !Number.isFinite(coord.x) || !Number.isFinite(coord.y)) {
+    const result = await fetchApiCoordinateRaw();
+    if (!result.ok) {
       const fallback = fallbackFocusPoint();
       setStatus("Shrimp: fallback mouse/center");
+      debugState = {
+        ...debugState,
+        source: "api",
+        fallback: lastMouseViewport ? "mouse" : "center",
+        rawApiCoord: null,
+        viewportCoord: null,
+        latencyMs: result.latencyMs ?? null
+      };
       applySpotlight(fallback.x, fallback.y);
       return;
     }
 
-    const viewportRaw = toViewportCoordinate(coord);
+    const viewportRaw = result.viewportRaw;
     latestRawViewportCoord = viewportRaw;
     const viewportCoord = applyCalibration(viewportRaw);
+    debugState = {
+      ...debugState,
+      source: "api",
+      fallback: "none",
+      rawApiCoord: result.rawApiCoord,
+      viewportCoord: viewportRaw,
+      latencyMs: result.latencyMs
+    };
     applySpotlight(viewportCoord.x, viewportCoord.y);
     setStatus(calibration?.enabled ? "Shrimp: tracking (calibrated)" : "Shrimp: tracking");
   } catch (_err) {
     const fallback = fallbackFocusPoint();
     setStatus("Shrimp: request failed, fallback");
+    debugState = {
+      ...debugState,
+      source: "request-error",
+      fallback: lastMouseViewport ? "mouse" : "center",
+      rawApiCoord: null,
+      viewportCoord: null,
+      latencyMs: null
+    };
     applySpotlight(fallback.x, fallback.y);
   }
 }
@@ -396,6 +525,7 @@ function loadSettingsAndStart() {
     if (debugBox) {
       debugBox.style.display = settings.showDebugBox ? "block" : "none";
     }
+    updateDebugPanel();
     startPolling();
   });
 }
@@ -419,6 +549,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     }
   }
   if (changed) startPolling();
+  updateDebugPanel();
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

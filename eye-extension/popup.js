@@ -3,7 +3,8 @@ const DEFAULT_SETTINGS = {
   coordinateBasis: "auto",
   pollMs: 80,
   spotlightRadius: 180,
-  showDebugBox: true
+  showDebugBox: true,
+  showDebugPanel: false
 };
 
 const apiUrlEl = document.getElementById("api-url");
@@ -11,10 +12,29 @@ const basisEl = document.getElementById("basis");
 const pollMsEl = document.getElementById("poll-ms");
 const radiusEl = document.getElementById("radius");
 const debugBoxEl = document.getElementById("show-debug-box");
+const debugPanelEl = document.getElementById("show-debug-panel");
 const statusEl = document.getElementById("status");
 const saveBtn = document.getElementById("save-btn");
 const calibrateBtn = document.getElementById("calibrate-btn");
 const resetCalibrationBtn = document.getElementById("reset-calibration-btn");
+
+function collectSettingsFromForm() {
+  return {
+    apiUrl: apiUrlEl.value.trim(),
+    coordinateBasis: basisEl.value,
+    pollMs: Math.max(30, Number(pollMsEl.value) || DEFAULT_SETTINGS.pollMs),
+    spotlightRadius: Math.max(60, Number(radiusEl.value) || DEFAULT_SETTINGS.spotlightRadius),
+    showDebugBox: debugBoxEl.checked,
+    showDebugPanel: debugPanelEl.checked
+  };
+}
+
+function saveSettings(message) {
+  const data = collectSettingsFromForm();
+  chrome.storage.local.set(data, () => {
+    statusEl.textContent = message || "Saved.";
+  });
+}
 
 chrome.storage.local.get(DEFAULT_SETTINGS, (stored) => {
   const settings = { ...DEFAULT_SETTINGS, ...stored };
@@ -23,21 +43,16 @@ chrome.storage.local.get(DEFAULT_SETTINGS, (stored) => {
   pollMsEl.value = String(settings.pollMs);
   radiusEl.value = String(settings.spotlightRadius);
   debugBoxEl.checked = Boolean(settings.showDebugBox);
+  debugPanelEl.checked = Boolean(settings.showDebugPanel);
 });
 
 saveBtn.addEventListener("click", () => {
-  const data = {
-    apiUrl: apiUrlEl.value.trim(),
-    coordinateBasis: basisEl.value,
-    pollMs: Math.max(30, Number(pollMsEl.value) || DEFAULT_SETTINGS.pollMs),
-    spotlightRadius: Math.max(60, Number(radiusEl.value) || DEFAULT_SETTINGS.spotlightRadius),
-    showDebugBox: debugBoxEl.checked
-  };
-
-  chrome.storage.local.set(data, () => {
-    statusEl.textContent = "Saved. Refresh target page if needed.";
-  });
+  saveSettings("Saved. Refresh target page if needed.");
 });
+
+debugBoxEl.addEventListener("change", () => saveSettings("Debug box updated."));
+debugPanelEl.addEventListener("change", () => saveSettings("Debug panel updated."));
+basisEl.addEventListener("change", () => saveSettings("Coordinate basis updated."));
 
 function sendToActiveTab(message, onDone) {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
