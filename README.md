@@ -95,6 +95,7 @@ python eye_server.py
 说明：
 - `EYE_VERTICAL_GAIN` 越大，上下移动越敏感（建议 1.2 ~ 2.2）
 - `EYE_Y_SMOOTHING` 越小，响应更快但抖动更明显（建议 0.2 ~ 0.5）
+- `EYE_SIZE_COMPENSATION=1`（默认）会按眼睛开合/宽度做归一化，降低“眼睛大小/半眯眼”造成的灵敏度变化
 
 ## 4) 坐标基准说明（插件）
 

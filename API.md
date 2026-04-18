@@ -225,6 +225,7 @@
 - `EYE_VERTICAL_GAIN`：垂直灵敏度增益，默认 `1.6`
 - `EYE_X_SMOOTHING`：X 轴平滑系数，默认 `0.25`
 - `EYE_Y_SMOOTHING`：Y 轴平滑系数，默认 `0.35`
+- `EYE_SIZE_COMPENSATION`：按眼睛开合/宽度做归一化补偿，默认开启（`1`）
 
 示例（Windows PowerShell）：
 

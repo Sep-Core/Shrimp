@@ -4,6 +4,7 @@ import threading
 import time
 import urllib.request
 import argparse
+import math
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
@@ -25,6 +26,7 @@ CAMERA_INDEX = int(os.getenv("EYE_CAMERA_INDEX", "0"))
 EYE_VERTICAL_GAIN = float(os.getenv("EYE_VERTICAL_GAIN", "1.6"))
 EYE_X_SMOOTHING = float(os.getenv("EYE_X_SMOOTHING", "0.25"))
 EYE_Y_SMOOTHING = float(os.getenv("EYE_Y_SMOOTHING", "0.35"))
+EYE_SIZE_COMPENSATION = os.getenv("EYE_SIZE_COMPENSATION", "1").lower() not in {"0", "false", "no", "off"}
 MODEL_URL = (
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
   "face_landmarker/float16/latest/face_landmarker.task"
@@ -197,6 +199,7 @@ class GazeTracker:
     self.preview_keypoints = []
     self.last_preview_frame = None
     self.eye_opening_baseline = None
+    self.eye_width_baseline = None
     self._init_mediapipe()
     self.cap = cv2.VideoCapture(camera_index)
     if not self.cap.isOpened():
@@ -243,6 +246,28 @@ class GazeTracker:
     return sum(xs) / len(xs), sum(ys) / len(ys)
 
   @staticmethod
+  def _rotate_xy(x: float, y: float, cx: float, cy: float, sin_a: float, cos_a: float):
+    dx = x - cx
+    dy = y - cy
+    rx = dx * cos_a - dy * sin_a + cx
+    ry = dx * sin_a + dy * cos_a + cy
+    return rx, ry
+
+  def _avg_rotated_landmark(
+    self,
+    landmarks,
+    indices,
+    cx: float,
+    cy: float,
+    sin_a: float,
+    cos_a: float,
+  ):
+    rotated = [self._rotate_xy(landmarks[i].x, landmarks[i].y, cx, cy, sin_a, cos_a) for i in indices]
+    xs = [p[0] for p in rotated]
+    ys = [p[1] for p in rotated]
+    return sum(xs) / len(xs), sum(ys) / len(ys)
+
+  @staticmethod
   def _ratio(value, start, end) -> float:
     denom = end - start
     if abs(denom) < 1e-6:
@@ -263,16 +288,40 @@ class GazeTracker:
       return self.latest
 
     self.preview_keypoints = self._build_preview_points(lm)
-    left_iris_x, left_iris_y = self._avg_landmark(lm, [468, 469, 470, 471, 472])
-    right_iris_x, right_iris_y = self._avg_landmark(lm, [473, 474, 475, 476, 477])
-    left_corner_outer_x = lm[33].x
-    left_corner_inner_x = lm[133].x
-    right_corner_inner_x = lm[362].x
-    right_corner_outer_x = lm[263].x
-    _, left_top_y = self._avg_landmark(lm, LEFT_UPPER_LID_INDICES)
-    _, left_bottom_y = self._avg_landmark(lm, LEFT_LOWER_LID_INDICES)
-    _, right_top_y = self._avg_landmark(lm, RIGHT_UPPER_LID_INDICES)
-    _, right_bottom_y = self._avg_landmark(lm, RIGHT_LOWER_LID_INDICES)
+    # Head roll compensation:
+    # rotate landmarks so the left-right eye line becomes horizontal.
+    left_eye_center = ((lm[33].x + lm[133].x) * 0.5, (lm[33].y + lm[133].y) * 0.5)
+    right_eye_center = ((lm[263].x + lm[362].x) * 0.5, (lm[263].y + lm[362].y) * 0.5)
+    roll = math.atan2(right_eye_center[1] - left_eye_center[1], right_eye_center[0] - left_eye_center[0])
+    rot_center_x = (left_eye_center[0] + right_eye_center[0]) * 0.5
+    rot_center_y = (left_eye_center[1] + right_eye_center[1]) * 0.5
+    sin_a = math.sin(-roll)
+    cos_a = math.cos(-roll)
+
+    left_iris_x, left_iris_y = self._avg_rotated_landmark(
+      lm, [468, 469, 470, 471, 472], rot_center_x, rot_center_y, sin_a, cos_a
+    )
+    right_iris_x, right_iris_y = self._avg_rotated_landmark(
+      lm, [473, 474, 475, 476, 477], rot_center_x, rot_center_y, sin_a, cos_a
+    )
+
+    left_corner_outer_x, _ = self._rotate_xy(lm[33].x, lm[33].y, rot_center_x, rot_center_y, sin_a, cos_a)
+    left_corner_inner_x, _ = self._rotate_xy(lm[133].x, lm[133].y, rot_center_x, rot_center_y, sin_a, cos_a)
+    right_corner_inner_x, _ = self._rotate_xy(lm[362].x, lm[362].y, rot_center_x, rot_center_y, sin_a, cos_a)
+    right_corner_outer_x, _ = self._rotate_xy(lm[263].x, lm[263].y, rot_center_x, rot_center_y, sin_a, cos_a)
+
+    _, left_top_y = self._avg_rotated_landmark(
+      lm, LEFT_UPPER_LID_INDICES, rot_center_x, rot_center_y, sin_a, cos_a
+    )
+    _, left_bottom_y = self._avg_rotated_landmark(
+      lm, LEFT_LOWER_LID_INDICES, rot_center_x, rot_center_y, sin_a, cos_a
+    )
+    _, right_top_y = self._avg_rotated_landmark(
+      lm, RIGHT_UPPER_LID_INDICES, rot_center_x, rot_center_y, sin_a, cos_a
+    )
+    _, right_bottom_y = self._avg_rotated_landmark(
+      lm, RIGHT_LOWER_LID_INDICES, rot_center_x, rot_center_y, sin_a, cos_a
+    )
     left_x_ratio = self._ratio(
       left_iris_x,
       min(left_corner_outer_x, left_corner_inner_x),
@@ -288,19 +337,42 @@ class GazeTracker:
       right_iris_y, min(right_top_y, right_bottom_y), max(right_top_y, right_bottom_y)
     )
     x = (left_x_ratio + right_x_ratio) / 2.0
-    y_raw = (left_y_ratio + right_y_ratio) / 2.0
 
     # Improve vertical sensitivity with eyelid-opening adaptive gain.
     left_opening = max(1e-4, left_bottom_y - left_top_y)
     right_opening = max(1e-4, right_bottom_y - right_top_y)
+    left_width = max(1e-4, abs(left_corner_inner_x - left_corner_outer_x))
+    right_width = max(1e-4, abs(right_corner_outer_x - right_corner_inner_x))
+
+    # EAR-like reliability; down-weight eye when it appears too "small" or squinted.
+    left_reliability = max(0.2, min(1.0, left_opening / left_width / 0.35))
+    right_reliability = max(0.2, min(1.0, right_opening / right_width / 0.35))
+    y_raw = (
+      left_y_ratio * left_reliability + right_y_ratio * right_reliability
+    ) / (left_reliability + right_reliability)
+
     opening = (left_opening + right_opening) / 2.0
+    width = (left_width + right_width) / 2.0
     if self.eye_opening_baseline is None:
       self.eye_opening_baseline = opening
     else:
       self.eye_opening_baseline = self.eye_opening_baseline * 0.95 + opening * 0.05
+    if self.eye_width_baseline is None:
+      self.eye_width_baseline = width
+    else:
+      self.eye_width_baseline = self.eye_width_baseline * 0.98 + width * 0.02
 
     openness_ratio = opening / max(1e-4, self.eye_opening_baseline)
     adaptive_gain = EYE_VERTICAL_GAIN * max(0.85, min(1.2, openness_ratio))
+
+    # Personal eye-size compensation:
+    # normalize sensitivity by person's relative eye opening (opening/width).
+    if EYE_SIZE_COMPENSATION:
+      current_ratio = opening / max(1e-4, width)
+      baseline_ratio = self.eye_opening_baseline / max(1e-4, self.eye_width_baseline)
+      size_factor = (baseline_ratio / max(1e-4, current_ratio)) ** 0.5
+      adaptive_gain *= max(0.8, min(1.25, size_factor))
+
     y = 0.5 + (y_raw - 0.5) * adaptive_gain
     y = max(0.0, min(1.0, y))
     if FLIP_X:
@@ -622,7 +694,8 @@ def main():
   print(f"[eye-server] horizontal flip: {'on' if FLIP_X else 'off'} (EYE_FLIP_X)")
   print(
     f"[eye-server] vertical tuning: gain={EYE_VERTICAL_GAIN}, "
-    f"x_smoothing={EYE_X_SMOOTHING}, y_smoothing={EYE_Y_SMOOTHING}"
+    f"x_smoothing={EYE_X_SMOOTHING}, y_smoothing={EYE_Y_SMOOTHING}, "
+    f"size_compensation={'on' if EYE_SIZE_COMPENSATION else 'off'}"
   )
   if args.preview:
     print("[eye-server] preview enabled: webcam + keypoints overlay")
