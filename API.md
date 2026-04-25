@@ -9,6 +9,7 @@
 - 坐标接口：`GET /coordinate`
 - 健康检查：`GET /health`
 - 屏幕配置：`GET /screen` / `POST /screen`
+- 插件配置模板：`GET /plugin-config`
 - 校准状态：`GET /calibration`
 - 提交校准：`POST /calibration`
 - 重置校准：`POST /calibration/reset`
@@ -243,7 +244,51 @@
 
 ---
 
-## 5) 常用环境变量（后端）
+## 5) 插件配置模板 API
+
+### 获取 Shrimp 插件推荐配置
+
+`GET /plugin-config`
+
+响应示例：
+
+```json
+{
+  "ok": true,
+  "plugin": {
+    "localUrl": "http://127.0.0.1:3000/coordinate",
+    "coordinateSpace": "auto",
+    "pollInterval": 1000,
+    "focusRadiusX": 307,
+    "focusRadiusY": 144,
+    "focusOffsetX": 0,
+    "focusOffsetY": 0,
+    "feather": 96,
+    "transitionMs": 320,
+    "brightness": 0.96,
+    "contrast": 0.88,
+    "saturate": 0.92,
+    "overlayTint": 0.08
+  },
+  "screen": {
+    "width": 2560,
+    "height": 1440,
+    "viewport_origin_x": 120,
+    "viewport_origin_y": 88,
+    "updated_at_ms": 1776500000000
+  }
+}
+```
+
+说明：
+
+- `plugin` 字段可直接用于填充 `shrimp/popup` 表单默认值
+- 半径参数会根据后端当前屏幕尺寸动态计算（并带有上下限保护）
+- 插件端可调用该接口实现“读取服务端配置”按钮
+
+---
+
+## 6) 常用环境变量（后端）
 
 - `EYE_SERVER_HOST`：服务地址，默认 `127.0.0.1`
 - `EYE_SERVER_PORT`：服务端口，默认 `3000`
@@ -273,7 +318,7 @@ python python-eye-server/eye_server.py
 
 ---
 
-## 6) 快速联调示例
+## 7) 快速联调示例
 
 ```powershell
 # 健康检查
@@ -297,6 +342,9 @@ curl "http://127.0.0.1:3000/calibration"
 # 查看屏幕配置
 curl "http://127.0.0.1:3000/screen"
 
+# 查看插件配置模板
+curl "http://127.0.0.1:3000/plugin-config"
+
 # 更新屏幕配置
 curl -X POST "http://127.0.0.1:3000/screen" \
   -H "Content-Type: application/json" \
@@ -305,7 +353,7 @@ curl -X POST "http://127.0.0.1:3000/screen" \
 
 ---
 
-## 7) 可视化预览启动参数（后端）
+## 8) 可视化预览启动参数（后端）
 
 后端支持启动时打开摄像头预览窗口，并叠加关键点与估计视线点：
 

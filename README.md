@@ -26,6 +26,7 @@ python eye_server.py
 
 - 坐标：`http://127.0.0.1:3000/coordinate`
 - 健康检查：`http://127.0.0.1:3000/health`
+- 插件默认配置：`http://127.0.0.1:3000/plugin-config`
 - WebUI：`http://127.0.0.1:3000/`
 
 ## Shrimp 插件特性
@@ -35,7 +36,11 @@ python eye_server.py
   - Focused Reading（默认）
   - Scanning Mode（快速移动触发）
   - Fatigue State（长时低活动触发）
+- 预设模板按钮（Focused / Scanning / Fatigue）：点击后填充推荐参数，便于快速起步
 - 弹窗中可调参数：半径、偏移、过渡、视觉倍率、模式阈值
+- 高级参数区默认折叠，面向高级用户按需展开修改
+- `启用扩展` 开关在弹窗内即时生效（无需点保存）
+- `读取服务端配置`：调用后端 `GET /plugin-config`，覆盖当前未保存表单
 - 校准入口（已集成）：
   - `开始校准`：在当前页显示蓝点采样并提交到后端 `/calibration`
   - `重置校准`：调用后端 `/calibration/reset`

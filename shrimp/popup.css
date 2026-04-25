@@ -156,6 +156,44 @@ h1 {
   padding-top: 10px;
 }
 
+.advanced-panel {
+  margin-top: 4px;
+  border-radius: 14px;
+  border: 1px solid rgba(18, 71, 77, 0.16);
+  background: rgba(255, 255, 255, 0.64);
+  overflow: clip;
+}
+
+.advanced-panel > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 12px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--accent-strong);
+}
+
+.advanced-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-panel > summary::after {
+  content: "展开";
+  float: right;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.advanced-panel[open] > summary::after {
+  content: "收起";
+}
+
+.advanced-panel__body {
+  padding: 12px 14px 14px;
+  border-top: 1px solid rgba(18, 71, 77, 0.12);
+}
+
 label {
   display: block;
   font-size: 12px;
@@ -175,6 +213,10 @@ label {
 
 .card > label + .grid,
 .card > label + .subpanel {
+  margin-top: 12px;
+}
+
+.advanced-panel__body > label + .grid {
   margin-top: 12px;
 }
 
@@ -213,7 +255,7 @@ label {
   color: var(--accent-strong);
 }
 
-input,
+input:not([type='checkbox']),
 select {
   width: 100%;
   margin-top: 7px;
@@ -227,7 +269,7 @@ select {
   outline: none;
 }
 
-input:focus,
+input:not([type='checkbox']):focus,
 select:focus {
   border-color: rgba(31, 111, 120, 0.58);
   box-shadow: 0 0 0 3px rgba(31, 111, 120, 0.16);

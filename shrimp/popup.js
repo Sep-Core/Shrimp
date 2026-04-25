@@ -46,6 +46,39 @@ const DEFAULTS = {
   modeDecayAfterIdleMs: 100,
 };
 
+const PRESET_TEMPLATES = {
+  focused: {
+    focusRadiusX: 210,
+    focusRadiusY: 140,
+    feather: 110,
+    transitionMs: 320,
+    brightness: 0.92,
+    contrast: 0.9,
+    saturate: 0.9,
+    overlayTint: 0.1,
+  },
+  scanning: {
+    focusRadiusX: 270,
+    focusRadiusY: 170,
+    feather: 86,
+    transitionMs: 220,
+    brightness: 1.0,
+    contrast: 0.9,
+    saturate: 0.95,
+    overlayTint: 0.06,
+  },
+  fatigue: {
+    focusRadiusX: 180,
+    focusRadiusY: 130,
+    feather: 124,
+    transitionMs: 420,
+    brightness: 0.86,
+    contrast: 0.84,
+    saturate: 0.82,
+    overlayTint: 0.16,
+  },
+};
+
 const form = {
   enabled: document.getElementById('enabled'),
   localUrl: document.getElementById('localUrl'),
@@ -115,6 +148,7 @@ async function initialize() {
   form.openCalibrationUiBtn.addEventListener('click', openCalibrationUi);
   form.readConfigBtn.addEventListener('click', readConfigFromServer);
   bindPresetSwitchUi();
+  bindFastControls();
   setStatus('配置已加载。');
 }
 
@@ -124,9 +158,33 @@ function bindPresetSwitchUi() {
     button.addEventListener('click', () => {
       for (const btn of buttons) btn.classList.remove('is-active');
       button.classList.add('is-active');
-      setStatus(`已选择预设入口：${button.dataset.preset}（仅 UI，不会改配置）`);
+      applyPresetTemplate(button.dataset.preset);
     });
   }
+}
+
+function bindFastControls() {
+  form.enabled.addEventListener('change', () => {
+    void saveEnabledToggle();
+  });
+}
+
+async function saveEnabledToggle() {
+  const enabled = Boolean(form.enabled.checked);
+  await new Promise((resolve) => chrome.storage.sync.set({ enabled }, resolve));
+  chrome.runtime.sendMessage({ type: 'lens-settings-updated', settings: { enabled } });
+  setStatus(enabled ? '扩展已启用（即时生效）。' : '扩展已停用（即时生效）。');
+}
+
+function applyPresetTemplate(presetKey) {
+  const template = PRESET_TEMPLATES[presetKey];
+  if (!template) {
+    setStatus(`未知预设：${presetKey}`);
+    return;
+  }
+  const merged = normalizeLoadedSettings({ ...readForm(), ...template });
+  fillForm(merged);
+  setStatus(`已填充 ${presetKey} 模板，请按需微调并点击“保存”。`);
 }
 
 function loadSettings() {

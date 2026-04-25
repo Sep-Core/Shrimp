@@ -94,6 +94,7 @@ let renderedCoordinate = null;
 let animationFrameId = null;
 let animationLastTimestamp = 0;
 let lastTextTintUpdateTimestamp = 0;
+let pollingGeneration = 0;
 let activeReadingMode = READING_MODES.FOCUSED;
 let pointerMotionState = createPointerMotionState();
 let modeConfig = createModeConfig(SETTINGS_DEFAULTS);
@@ -183,6 +184,7 @@ function handleStorageChange(changes, areaName) {
 }
 
 function refreshPolling() {
+  pollingGeneration += 1;
   stopPolling();
   startPolling();
 }
@@ -300,6 +302,7 @@ function ensureOverlay() {
 }
 
 async function requestCoordinate() {
+  const requestGeneration = pollingGeneration;
   updateReadingMode(performance.now());
 
   if (!settings.enabled || !settings.localUrl) {
@@ -312,6 +315,9 @@ async function requestCoordinate() {
       type: 'fetch-coordinate',
       url: settings.localUrl,
     });
+    if (requestGeneration !== pollingGeneration || !settings.enabled) {
+      return;
+    }
 
     if (!response?.ok) {
       applyCoordinate(resolvePointerCoordinate());
@@ -323,6 +329,9 @@ async function requestCoordinate() {
       : resolvePointerCoordinate();
     applyCoordinate(coordinate);
   } catch (error) {
+    if (requestGeneration !== pollingGeneration || !settings.enabled) {
+      return;
+    }
     console.warn('Coordinate Dimming Lens request failed:', error);
     applyCoordinate(resolvePointerCoordinate());
   }
