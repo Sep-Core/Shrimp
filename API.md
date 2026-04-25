@@ -184,6 +184,7 @@
 ```
 
 后端会计算仿射矩阵并在后续 `/coordinate` 中应用映射。
+成功提交后会自动持久化到本地校准文件，服务重启后自动加载。
 
 > 当前后端使用鲁棒拟合：先做最小二乘，再按残差剔除离群点后二次拟合。
 
@@ -201,6 +202,8 @@
 ### 重置校准
 
 `POST /calibration/reset`
+
+重置后也会立即写回校准文件。
 
 ---
 
@@ -257,6 +260,7 @@
 - `EYE_DYNAMIC_ALPHA_MAX`：自适应平滑最大 alpha，默认 `0.72`
 - `EYE_JUMP_GUARD`：低置信度突跳保护阈值，默认 `0.34`
 - `EYE_MAX_STEP`：单帧最大步进限制，默认 `0.23`
+- `EYE_CALIBRATION_FILE`：校准参数文件路径，默认 `python-eye-server/calibration.json`
 
 示例（Windows PowerShell）：
 

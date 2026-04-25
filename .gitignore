@@ -5,3 +5,5 @@ venv/
 .env
 python-eye-server/models/
 *.task
+python-eye-server/calibration.json
+archive/

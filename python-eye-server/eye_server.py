@@ -4,6 +4,7 @@ import os
 import threading
 import time
 import urllib.request
+import urllib.error
 import argparse
 import math
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -37,7 +38,12 @@ MODEL_URL = (
   "face_landmarker/float16/latest/face_landmarker.task"
 )
 MODEL_PATH = Path(__file__).parent / "models" / "face_landmarker.task"
+MODEL_DOWNLOAD_TIMEOUT = float(os.getenv("EYE_MODEL_DOWNLOAD_TIMEOUT", "20"))
+MODEL_DOWNLOAD_RETRIES = int(os.getenv("EYE_MODEL_DOWNLOAD_RETRIES", "3"))
 WEBUI_DIR = Path(__file__).parent / "webui"
+CALIBRATION_FILE = Path(
+  os.getenv("EYE_CALIBRATION_FILE", str(Path(__file__).parent / "calibration.json"))
+)
 
 LEFT_UPPER_LID_INDICES = [159, 160, 161, 246]
 LEFT_LOWER_LID_INDICES = [145, 144, 163, 7]
@@ -222,8 +228,9 @@ class ScreenConfig:
 
 
 class CalibrationStore:
-  def __init__(self) -> None:
+  def __init__(self, storage_path: Path = CALIBRATION_FILE) -> None:
     self._lock = threading.Lock()
+    self.storage_path = storage_path
     self._state = {
       "enabled": False,
       "model_type": None,
@@ -232,21 +239,74 @@ class CalibrationStore:
       "updated_at_ms": None,
       "sample_count": 0,
     }
+    self._load_from_disk()
 
   def get(self) -> dict:
     with self._lock:
-      return {
-        "enabled": bool(self._state["enabled"]),
-        "model_type": self._state["model_type"],
-        "affine": dict(self._state["affine"]) if self._state["affine"] else None,
-        "quadratic": {
-          "x": list(self._state["quadratic"]["x"]),
-          "y": list(self._state["quadratic"]["y"]),
-          "basis": list(self._state["quadratic"].get("basis", [])),
-        } if self._state["quadratic"] else None,
-        "updated_at_ms": self._state["updated_at_ms"],
-        "sample_count": self._state["sample_count"],
-      }
+      return self._snapshot_unlocked()
+
+  def _snapshot_unlocked(self) -> dict:
+    return {
+      "enabled": bool(self._state["enabled"]),
+      "model_type": self._state["model_type"],
+      "affine": dict(self._state["affine"]) if self._state["affine"] else None,
+      "quadratic": {
+        "x": list(self._state["quadratic"]["x"]),
+        "y": list(self._state["quadratic"]["y"]),
+        "basis": list(self._state["quadratic"].get("basis", [])),
+      } if self._state["quadratic"] else None,
+      "updated_at_ms": self._state["updated_at_ms"],
+      "sample_count": self._state["sample_count"],
+    }
+
+  def _save_to_disk(self, snapshot: dict) -> None:
+    try:
+      self.storage_path.parent.mkdir(parents=True, exist_ok=True)
+      tmp = self.storage_path.with_suffix(f"{self.storage_path.suffix}.tmp")
+      tmp.write_text(json.dumps(snapshot, ensure_ascii=True, indent=2), encoding="utf-8")
+      os.replace(tmp, self.storage_path)
+    except Exception as err:
+      print(f"[eye-server] warning: failed to save calibration file: {err}")
+
+  def _load_from_disk(self) -> None:
+    if not self.storage_path.exists():
+      return
+    try:
+      raw = json.loads(self.storage_path.read_text(encoding="utf-8"))
+      model_type = raw.get("model_type")
+      affine = raw.get("affine")
+      quadratic = raw.get("quadratic")
+      if model_type == "affine" and isinstance(affine, dict):
+        required = {"ax", "bx", "cx", "ay", "by", "cy"}
+        if required.issubset(set(affine.keys())):
+          self._state = {
+            "enabled": bool(raw.get("enabled", True)),
+            "model_type": "affine",
+            "affine": {k: float(affine[k]) for k in required},
+            "quadratic": None,
+            "updated_at_ms": int(raw.get("updated_at_ms") or now_ms()),
+            "sample_count": int(raw.get("sample_count", 0)),
+          }
+          return
+      if model_type == "quadratic" and isinstance(quadratic, dict):
+        x = quadratic.get("x")
+        y = quadratic.get("y")
+        if isinstance(x, list) and isinstance(y, list) and len(x) >= 6 and len(y) >= 6:
+          self._state = {
+            "enabled": bool(raw.get("enabled", True)),
+            "model_type": "quadratic",
+            "affine": None,
+            "quadratic": {
+              "x": [float(v) for v in x[:6]],
+              "y": [float(v) for v in y[:6]],
+              "basis": list(quadratic.get("basis", ["x", "y", "xy", "xx", "yy", "1"])),
+            },
+            "updated_at_ms": int(raw.get("updated_at_ms") or now_ms()),
+            "sample_count": int(raw.get("sample_count", 0)),
+          }
+          return
+    except Exception as err:
+      print(f"[eye-server] warning: failed to load calibration file: {err}")
 
   def set_affine(self, affine: dict, sample_count: int) -> dict:
     with self._lock:
@@ -258,14 +318,9 @@ class CalibrationStore:
         "updated_at_ms": now_ms(),
         "sample_count": int(sample_count),
       }
-      return {
-        "enabled": bool(self._state["enabled"]),
-        "model_type": self._state["model_type"],
-        "affine": dict(self._state["affine"]) if self._state["affine"] else None,
-        "quadratic": None,
-        "updated_at_ms": self._state["updated_at_ms"],
-        "sample_count": self._state["sample_count"],
-      }
+      snapshot = self._snapshot_unlocked()
+    self._save_to_disk(snapshot)
+    return snapshot
 
   def set_quadratic(self, quadratic: dict, sample_count: int) -> dict:
     with self._lock:
@@ -281,18 +336,9 @@ class CalibrationStore:
         "updated_at_ms": now_ms(),
         "sample_count": int(sample_count),
       }
-      return {
-        "enabled": bool(self._state["enabled"]),
-        "model_type": self._state["model_type"],
-        "affine": None,
-        "quadratic": {
-          "x": list(self._state["quadratic"]["x"]),
-          "y": list(self._state["quadratic"]["y"]),
-          "basis": list(self._state["quadratic"].get("basis", [])),
-        },
-        "updated_at_ms": self._state["updated_at_ms"],
-        "sample_count": self._state["sample_count"],
-      }
+      snapshot = self._snapshot_unlocked()
+    self._save_to_disk(snapshot)
+    return snapshot
 
   def clear(self) -> dict:
     with self._lock:
@@ -304,14 +350,9 @@ class CalibrationStore:
         "updated_at_ms": now_ms(),
         "sample_count": 0,
       }
-      return {
-        "enabled": bool(self._state["enabled"]),
-        "model_type": self._state["model_type"],
-        "affine": None,
-        "quadratic": None,
-        "updated_at_ms": self._state["updated_at_ms"],
-        "sample_count": self._state["sample_count"],
-      }
+      snapshot = self._snapshot_unlocked()
+    self._save_to_disk(snapshot)
+    return snapshot
 
   def apply(self, x: float, y: float, width: int, height: int):
     state = self.get()
@@ -421,8 +462,43 @@ class GazeTracker:
     if MODEL_PATH.exists():
       return
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    print(f"[eye-server] downloading model -> {MODEL_PATH}")
-    urllib.request.urlretrieve(MODEL_URL, str(MODEL_PATH))
+    retries = max(1, MODEL_DOWNLOAD_RETRIES)
+    timeout = max(1.0, MODEL_DOWNLOAD_TIMEOUT)
+    print(
+      f"[eye-server] downloading model -> {MODEL_PATH} "
+      f"(timeout={timeout}s, retries={retries})"
+    )
+    last_error = None
+    temp_path = MODEL_PATH.with_suffix(f"{MODEL_PATH.suffix}.download")
+    for attempt in range(1, retries + 1):
+      try:
+        with urllib.request.urlopen(MODEL_URL, timeout=timeout) as response:
+          with open(temp_path, "wb") as output_file:
+            while True:
+              chunk = response.read(1024 * 64)
+              if not chunk:
+                break
+              output_file.write(chunk)
+        temp_path.replace(MODEL_PATH)
+        return
+      except (TimeoutError, urllib.error.URLError, OSError) as exc:
+        last_error = exc
+        if temp_path.exists():
+          temp_path.unlink()
+        if attempt < retries:
+          sleep_seconds = min(8.0, 1.5 * attempt)
+          print(
+            f"[eye-server] model download failed "
+            f"(attempt {attempt}/{retries}): {exc}. retrying in {sleep_seconds:.1f}s..."
+          )
+          time.sleep(sleep_seconds)
+        else:
+          print(f"[eye-server] model download failed (attempt {attempt}/{retries}): {exc}")
+    raise RuntimeError(
+      "Failed to download face_landmarker.task. "
+      f"Please download it manually from {MODEL_URL} and place it at {MODEL_PATH}. "
+      "You can also increase EYE_MODEL_DOWNLOAD_TIMEOUT or EYE_MODEL_DOWNLOAD_RETRIES."
+    ) from last_error
 
   def _avg_landmark(self, landmarks, indices):
     xs = [landmarks[i].x for i in indices]
@@ -1005,6 +1081,12 @@ def main():
   print(f"[eye-server] web UI: http://{HOST}:{PORT}/")
   print("[eye-server] formats: object | nested | array | text | debug")
   print("[eye-server] calibration APIs: GET/POST /calibration, POST /calibration/reset")
+  loaded_calib = calibration_store.get()
+  print(f"[eye-server] calibration file: {CALIBRATION_FILE}")
+  print(
+    f"[eye-server] calibration loaded: {'yes' if loaded_calib.get('enabled') else 'no'}"
+    f" ({loaded_calib.get('model_type') or 'none'})"
+  )
   print("[eye-server] screen APIs: GET/POST /screen")
   print(f"[eye-server] horizontal flip: {'on' if FLIP_X else 'off'} (EYE_FLIP_X)")
   print(
