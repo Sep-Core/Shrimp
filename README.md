@@ -4,7 +4,6 @@
 
 - `shrimp/`：正式版 Chrome 插件（主项目）
 - `python-eye-server/`：本地眼动后端（HTTP API + WebUI + 校准）
-- `archive/eye-extension-legacy/`：旧调试插件归档（已停用）
 
 ## 快速开始
 
