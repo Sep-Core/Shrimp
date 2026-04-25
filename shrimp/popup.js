@@ -97,6 +97,7 @@ const form = {
   calibrateBtn: document.getElementById('calibrateBtn'),
   resetCalibrationBtn: document.getElementById('resetCalibrationBtn'),
   openCalibrationUiBtn: document.getElementById('openCalibrationUiBtn'),
+  readConfigBtn: document.getElementById('readConfigBtn'),
   status: document.getElementById('status'),
 };
 
@@ -112,7 +113,20 @@ async function initialize() {
   form.calibrateBtn.addEventListener('click', startCalibration);
   form.resetCalibrationBtn.addEventListener('click', resetCalibration);
   form.openCalibrationUiBtn.addEventListener('click', openCalibrationUi);
+  form.readConfigBtn.addEventListener('click', readConfigFromServer);
+  bindPresetSwitchUi();
   setStatus('配置已加载。');
+}
+
+function bindPresetSwitchUi() {
+  const buttons = Array.from(document.querySelectorAll('.preset-switch__btn'));
+  for (const button of buttons) {
+    button.addEventListener('click', () => {
+      for (const btn of buttons) btn.classList.remove('is-active');
+      button.classList.add('is-active');
+      setStatus(`已选择预设入口：${button.dataset.preset}（仅 UI，不会改配置）`);
+    });
+  }
 }
 
 function loadSettings() {
@@ -373,6 +387,46 @@ function openCalibrationUi() {
   } catch {
     setStatus('URL 无效，无法打开校准页。');
   }
+}
+
+async function readConfigFromServer() {
+  const localUrl = form.localUrl.value?.trim();
+  if (!localUrl) {
+    setStatus('请先填写本地 URL。');
+    return;
+  }
+
+  const permissionGranted = await ensureOriginPermission(localUrl);
+  if (!permissionGranted) return;
+
+  setStatus('正在读取服务端配置...');
+  try {
+    const base = new URL(localUrl);
+    base.pathname = '/plugin-config';
+    base.search = '';
+    base.hash = '';
+    const response = await fetch(base.toString(), { cache: 'no-store' });
+    if (!response.ok) {
+      setStatus(`读取失败：http-${response.status}`);
+      return;
+    }
+    const payload = await response.json();
+    const pluginConfig = payload?.plugin;
+    if (!pluginConfig || typeof pluginConfig !== 'object') {
+      setStatus('读取失败：服务端未返回 plugin 配置。');
+      return;
+    }
+
+    applyServerConfigToForm(pluginConfig);
+    setStatus('已读取服务端配置，并覆盖当前未保存输入。');
+  } catch (error) {
+    setStatus(`读取失败：${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function applyServerConfigToForm(serverConfig) {
+  const merged = normalizeLoadedSettings({ ...readForm(), ...serverConfig });
+  fillForm(merged);
 }
 
 function normalizeModeSettings(source) {

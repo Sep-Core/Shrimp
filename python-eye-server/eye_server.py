@@ -922,6 +922,25 @@ def make_handler(store: CoordinateStore, calibration_store: CalibrationStore, sc
       if parsed.path == "/calibration":
         self._write_json({"ok": True, "calibration": calibration_store.get()})
         return
+      if parsed.path == "/plugin-config":
+        screen = screen_config.get()
+        plugin = {
+          "localUrl": f"http://{HOST}:{PORT}{ENDPOINT}",
+          "coordinateSpace": "auto",
+          "pollInterval": 1000,
+          "focusRadiusX": max(80, min(500, int(round(screen["width"] * 0.12)))),
+          "focusRadiusY": max(60, min(420, int(round(screen["height"] * 0.10)))),
+          "focusOffsetX": 0,
+          "focusOffsetY": 0,
+          "feather": 96,
+          "transitionMs": 320,
+          "brightness": 0.96,
+          "contrast": 0.88,
+          "saturate": 0.92,
+          "overlayTint": 0.08,
+        }
+        self._write_json({"ok": True, "plugin": plugin, "screen": screen})
+        return
       if parsed.path != ENDPOINT:
         self._write_json({"ok": False, "error": "not-found"}, status=404)
         return

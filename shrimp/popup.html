@@ -16,14 +16,48 @@
 
       <section class="mode-guide" aria-label="自动模式预设说明">
         <p class="mode-guide__title">自动模式预设</p>
-        <ul class="mode-guide__list">
-          <li><strong>Focused Reading</strong>：默认模式，焦点外更暗。</li>
-          <li><strong>Scanning Mode</strong>：默认在光标持续快速移动 1200ms 后触发（可调），焦点外更亮。</li>
-          <li><strong>Fatigue State</strong>：默认在长时低活动且慢速时触发（可调），变化更慢且焦点外更暗。</li>
-        </ul>
+        <div class="preset-switch" role="tablist" aria-label="模式预设（UI入口）">
+          <button type="button" class="preset-switch__btn is-active" data-preset="focused">Focused</button>
+          <button type="button" class="preset-switch__btn" data-preset="scanning">Scanning</button>
+          <button type="button" class="preset-switch__btn" data-preset="fatigue">Fatigue</button>
+        </div>
+        <p class="mode-guide__hint">当前仅提供 UI 入口，不会自动覆盖已有参数配置。</p>
       </section>
 
       <section class="card">
+        <section class="quick-controls quick-controls--enable" aria-label="启用开关">
+          <p class="quick-controls__title">启用状态</p>
+          <label class="switch-toggle">
+            <input id="enabled" type="checkbox" />
+            <span class="switch-toggle__track">
+              <span class="switch-toggle__thumb"></span>
+            </span>
+          </label>
+        </section>
+
+        <section class="quick-controls quick-controls--calibration" aria-label="校准操作">
+          <p class="quick-controls__title">校准</p>
+          <div class="actions">
+            <button id="calibrateBtn" type="button">开始校准</button>
+            <button id="resetCalibrationBtn" type="button" class="ghost">重置校准</button>
+          </div>
+          <div class="actions">
+            <button id="openCalibrationUiBtn" type="button" class="ghost">打开后端校准页</button>
+          </div>
+        </section>
+
+        <section class="quick-controls quick-controls--config" aria-label="配置读写">
+          <p class="quick-controls__title">配置</p>
+          <div class="actions">
+            <button id="saveBtn" type="button">保存</button>
+            <button id="testBtn" type="button" class="ghost">测试接口</button>
+          </div>
+          <div class="actions">
+            <button id="readConfigBtn" type="button" class="ghost">读取服务端配置</button>
+          </div>
+          <p class="status" id="status">尚未读取配置。</p>
+        </section>
+
         <label>
           本地坐标 URL
           <input id="localUrl" type="url" placeholder="http://127.0.0.1:3000/coordinate" />
@@ -285,26 +319,6 @@
           </div>
         </section>
 
-        <label class="toggle">
-          <input id="enabled" type="checkbox" />
-          <span>启用扩展</span>
-        </label>
-
-        <div class="actions">
-          <button id="saveBtn" type="button">保存</button>
-          <button id="testBtn" type="button" class="ghost">测试接口</button>
-        </div>
-
-        <div class="actions">
-          <button id="calibrateBtn" type="button">开始校准</button>
-          <button id="resetCalibrationBtn" type="button" class="ghost">重置校准</button>
-        </div>
-
-        <div class="actions">
-          <button id="openCalibrationUiBtn" type="button" class="ghost">打开后端校准页</button>
-        </div>
-
-        <p class="status" id="status">尚未读取配置。</p>
       </section>
     </main>
 

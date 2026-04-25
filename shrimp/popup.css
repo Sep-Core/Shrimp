@@ -1,5 +1,6 @@
 :root {
   color-scheme: light;
+  --popup-width: 780px;
   --bg: #f4efe8;
   --panel: rgba(255, 255, 255, 0.82);
   --panel-border: rgba(64, 46, 28, 0.14);
@@ -10,15 +11,21 @@
   --shadow: 0 18px 40px rgba(51, 34, 20, 0.16);
 }
 
+html {
+  width: var(--popup-width);
+  min-width: var(--popup-width);
+}
+
 * {
   box-sizing: border-box;
 }
 
 body {
   margin: 0;
-  width: 520px;
+  width: var(--popup-width);
+  min-width: var(--popup-width);
   min-height: 640px;
-  max-height: 720px;
+  max-height: 760px;
   overflow-y: auto;
   font-family: "Trebuchet MS", "Segoe UI Variable", "Gill Sans", sans-serif;
   color: var(--text);
@@ -30,6 +37,7 @@ body {
 
 .shell {
   padding: 18px;
+  min-width: calc(var(--popup-width) - 36px);
 }
 
 .hero {
@@ -64,6 +72,36 @@ body {
   margin-top: 4px;
 }
 
+.mode-guide__hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.preset-switch {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.preset-switch__btn {
+  border-radius: 10px;
+  border: 1px solid rgba(18, 71, 77, 0.2);
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--accent-strong);
+  padding: 9px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.preset-switch__btn.is-active {
+  color: white;
+  background: linear-gradient(135deg, var(--accent), #2c9aa4);
+  border-color: transparent;
+}
+
 .eyebrow {
   margin: 0 0 8px;
   font-size: 12px;
@@ -94,6 +132,30 @@ h1 {
   box-shadow: var(--shadow);
 }
 
+.quick-controls {
+  margin-bottom: 14px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(18, 71, 77, 0.16);
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.quick-controls__title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-strong);
+}
+
+.quick-controls--enable {
+  padding: 16px 14px;
+}
+
+.quick-controls--calibration,
+.quick-controls--config {
+  padding-top: 10px;
+}
+
 label {
   display: block;
   font-size: 12px;
@@ -102,13 +164,17 @@ label {
   color: var(--accent-strong);
 }
 
-label + label,
 .grid + .grid,
 .grid + .subpanel,
 .subpanel + .subpanel,
 .subpanel + .toggle,
 .grid + .toggle,
 .toggle + .actions {
+  margin-top: 12px;
+}
+
+.card > label + .grid,
+.card > label + .subpanel {
   margin-top: 12px;
 }
 
@@ -170,14 +236,19 @@ select:focus {
 .grid {
   display: grid;
   gap: 10px;
+  align-items: start;
+}
+
+.grid > label {
+  margin-top: 0 !important;
 }
 
 .two-up {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .three-up {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .toggle {
@@ -185,6 +256,50 @@ select:focus {
   align-items: center;
   gap: 10px;
   font-size: 13px;
+}
+
+.switch-toggle {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 8px 0 4px;
+}
+
+.switch-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch-toggle__track {
+  position: relative;
+  width: 94px;
+  height: 50px;
+  border-radius: 999px;
+  background: rgba(18, 71, 77, 0.24);
+  border: 1px solid rgba(18, 71, 77, 0.2);
+  transition: all 160ms ease;
+}
+
+.switch-toggle__thumb {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.2);
+  transition: transform 160ms ease;
+}
+
+.switch-toggle input:checked + .switch-toggle__track {
+  background: linear-gradient(135deg, var(--accent), #2c9aa4);
+}
+
+.switch-toggle input:checked + .switch-toggle__track .switch-toggle__thumb {
+  transform: translateX(44px);
 }
 
 .toggle input {
@@ -197,6 +312,14 @@ select:focus {
 .actions {
   display: flex;
   gap: 10px;
+}
+
+.quick-controls .actions + .actions {
+  margin-top: 10px;
+}
+
+.quick-controls .status {
+  margin-top: 10px;
 }
 
 button {
@@ -234,11 +357,12 @@ button.ghost {
 
 @media (max-width: 560px) {
   body {
-    width: 100%;
+    width: var(--popup-width);
+    min-width: var(--popup-width);
   }
 
   .two-up,
   .three-up {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
