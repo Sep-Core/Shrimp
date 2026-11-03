@@ -34,7 +34,6 @@ const DEFAULTS = {
   modeMovementEpsilonPx: 1.2,
   modeFastSpeedPxPerMs: 0.88,
   modeFastResetSpeedPxPerMs: 0.5,
-  modeScanTriggerMs: 1200,
   modeScanExitSpeedPxPerMs: 0.42,
   modeScanExitHoldMs: 360,
   modeFatigueIdleMs: 7000,
@@ -115,7 +114,6 @@ const form = {
   modeMovementEpsilonPx: document.getElementById('modeMovementEpsilonPx'),
   modeFastSpeedPxPerMs: document.getElementById('modeFastSpeedPxPerMs'),
   modeFastResetSpeedPxPerMs: document.getElementById('modeFastResetSpeedPxPerMs'),
-  modeScanTriggerMs: document.getElementById('modeScanTriggerMs'),
   modeScanExitSpeedPxPerMs: document.getElementById('modeScanExitSpeedPxPerMs'),
   modeScanExitHoldMs: document.getElementById('modeScanExitHoldMs'),
   modeFatigueIdleMs: document.getElementById('modeFatigueIdleMs'),
@@ -257,7 +255,6 @@ function fillForm(settings) {
   form.modeMovementEpsilonPx.value = settings.modeMovementEpsilonPx ?? DEFAULTS.modeMovementEpsilonPx;
   form.modeFastSpeedPxPerMs.value = settings.modeFastSpeedPxPerMs ?? DEFAULTS.modeFastSpeedPxPerMs;
   form.modeFastResetSpeedPxPerMs.value = settings.modeFastResetSpeedPxPerMs ?? DEFAULTS.modeFastResetSpeedPxPerMs;
-  form.modeScanTriggerMs.value = settings.modeScanTriggerMs ?? DEFAULTS.modeScanTriggerMs;
   form.modeScanExitSpeedPxPerMs.value = settings.modeScanExitSpeedPxPerMs ?? DEFAULTS.modeScanExitSpeedPxPerMs;
   form.modeScanExitHoldMs.value = settings.modeScanExitHoldMs ?? DEFAULTS.modeScanExitHoldMs;
   form.modeFatigueIdleMs.value = settings.modeFatigueIdleMs ?? DEFAULTS.modeFatigueIdleMs;
@@ -307,7 +304,6 @@ function readForm() {
     modeMovementEpsilonPx: form.modeMovementEpsilonPx.value,
     modeFastSpeedPxPerMs: form.modeFastSpeedPxPerMs.value,
     modeFastResetSpeedPxPerMs: form.modeFastResetSpeedPxPerMs.value,
-    modeScanTriggerMs: form.modeScanTriggerMs.value,
     modeScanExitSpeedPxPerMs: form.modeScanExitSpeedPxPerMs.value,
     modeScanExitHoldMs: form.modeScanExitHoldMs.value,
     modeFatigueIdleMs: form.modeFatigueIdleMs.value,
@@ -564,7 +560,6 @@ function normalizeModeSettings(source) {
       fastSpeed,
       Math.min(fastSpeed, DEFAULTS.modeFastResetSpeedPxPerMs)
     ),
-    modeScanTriggerMs: toClampedNumber(values.modeScanTriggerMs, 200, 8000, DEFAULTS.modeScanTriggerMs),
     modeScanExitSpeedPxPerMs: toClampedNumber(
       values.modeScanExitSpeedPxPerMs,
       0.01,

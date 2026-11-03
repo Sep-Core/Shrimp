@@ -34,7 +34,7 @@ const SETTINGS_DEFAULTS = {
   modeMovementEpsilonPx: 1.2,
   modeFastSpeedPxPerMs: 0.88,
   modeFastResetSpeedPxPerMs: 0.5,
-  modeScanTriggerMs: 1200,
+  modeScanTriggerMs: 0,
   modeScanExitSpeedPxPerMs: 0.42,
   modeScanExitHoldMs: 360,
   modeFatigueIdleMs: 7000,
@@ -47,8 +47,9 @@ const SETTINGS_DEFAULTS = {
 };
 
 const OUTSIDE_TEXT_CLASS = 'shrimp-coordinate-lens__outside-text';
-const MAX_TINTED_TEXT_ELEMENTS = 2200;
-const TEXT_TINT_UPDATE_INTERVAL_MS = 80;
+const TOP_SAFE_INSET_PX = 0; // 顶部安全区(px)：让聚光层避开顶部浏览器 UI / “翻译此页”提示条
+const MAX_TINTED_TEXT_ELEMENTS = 1400;
+const TEXT_TINT_UPDATE_INTERVAL_MS = 110;
 const TEXT_TINT_MIN_TRANSITION_MS = 220;
 const TEXT_INSIDE_MAX_SCALE = 1.16;
 const EXCLUDED_TINT_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'INPUT', 'SELECT', 'OPTION']);
@@ -88,6 +89,7 @@ let settings = { ...SETTINGS_DEFAULTS };
 let overlayRoot = null;
 let pollTimer = null;
 let lastPointerCoordinate = null;
+let serverCoordinateActive = false; // 本地坐标接口是否正在供给坐标；false 时走指针实时跟随
 let outsideTintedElements = new Set();
 let targetCoordinate = null;
 let renderedCoordinate = null;
@@ -100,6 +102,8 @@ let pointerMotionState = createPointerMotionState();
 let modeConfig = createModeConfig(SETTINGS_DEFAULTS);
 let calibrationDot = null;
 let calibrationInProgress = false;
+
+console.info('[Shrimp] content script loaded v0.2.0 — 指针即时跟随、平滑亮度递增、去光环化、文字色调保留');
 
 initialize().catch((error) => {
   console.error('Coordinate Dimming Lens initialization failed:', error);
@@ -217,19 +221,22 @@ function ensureOverlay() {
   overlayRoot.setAttribute('aria-hidden', 'true');
   overlayRoot.innerHTML = `
     <div class="shrimp-coordinate-lens__wash"></div>
-    <div class="shrimp-coordinate-lens__ring"></div>
   `;
 
   const style = document.createElement('style');
   style.textContent = `
     #shrimp-coordinate-lens {
       position: fixed;
-      inset: 0;
+      top: var(--shrimp-safe-top, 0px);
+      left: 0;
+      right: 0;
+      bottom: 0;
       z-index: 2147483647;
       pointer-events: none;
       contain: strict;
       --shrimp-focus-x: 50vw;
       --shrimp-focus-y: 50vh;
+      --shrimp-safe-top: 0px;
       --shrimp-focus-radius-x: ${SETTINGS_DEFAULTS.focusRadiusX}px;
       --shrimp-focus-radius-y: ${SETTINGS_DEFAULTS.focusRadiusY}px;
       --shrimp-focus-inner-stop: 56%;
@@ -253,35 +260,22 @@ function ensureOverlay() {
       -webkit-backdrop-filter: brightness(var(--shrimp-brightness)) contrast(var(--shrimp-contrast)) saturate(var(--shrimp-saturate));
       -webkit-mask-image: radial-gradient(
         ellipse var(--shrimp-focus-radius-x) var(--shrimp-focus-radius-y) at var(--shrimp-focus-x) var(--shrimp-focus-y),
-        transparent 0,
-        transparent var(--shrimp-focus-inner-stop),
-        rgba(0, 0, 0, 0.25) calc(var(--shrimp-focus-inner-stop) + 3%),
-        rgba(0, 0, 0, 0.92) var(--shrimp-focus-outer-stop),
-        rgba(0, 0, 0, 1) 100%
+        rgba(0, 0, 0, 0.30) 0%,
+        rgba(0, 0, 0, 0.33) calc(var(--shrimp-focus-inner-stop) * 0.55),
+        rgba(0, 0, 0, 0.40) var(--shrimp-focus-inner-stop),
+        rgba(0, 0, 0, 0.54) calc(var(--shrimp-focus-inner-stop) + (var(--shrimp-focus-outer-stop) - var(--shrimp-focus-inner-stop)) * 0.25),
+        rgba(0, 0, 0, 0.70) calc(var(--shrimp-focus-inner-stop) + (var(--shrimp-focus-outer-stop) - var(--shrimp-focus-inner-stop)) * 0.55),
+        rgba(0, 0, 0, 0.88) var(--shrimp-focus-outer-stop)
       );
       mask-image: radial-gradient(
         ellipse var(--shrimp-focus-radius-x) var(--shrimp-focus-radius-y) at var(--shrimp-focus-x) var(--shrimp-focus-y),
-        transparent 0,
-        transparent var(--shrimp-focus-inner-stop),
-        rgba(0, 0, 0, 0.25) calc(var(--shrimp-focus-inner-stop) + 3%),
-        rgba(0, 0, 0, 0.92) var(--shrimp-focus-outer-stop),
-        rgba(0, 0, 0, 1) 100%
+        rgba(0, 0, 0, 0.30) 0%,
+        rgba(0, 0, 0, 0.33) calc(var(--shrimp-focus-inner-stop) * 0.55),
+        rgba(0, 0, 0, 0.40) var(--shrimp-focus-inner-stop),
+        rgba(0, 0, 0, 0.54) calc(var(--shrimp-focus-inner-stop) + (var(--shrimp-focus-outer-stop) - var(--shrimp-focus-inner-stop)) * 0.25),
+        rgba(0, 0, 0, 0.70) calc(var(--shrimp-focus-inner-stop) + (var(--shrimp-focus-outer-stop) - var(--shrimp-focus-inner-stop)) * 0.55),
+        rgba(0, 0, 0, 0.88) var(--shrimp-focus-outer-stop)
       );
-    }
-
-    #shrimp-coordinate-lens .shrimp-coordinate-lens__ring {
-      position: absolute;
-      inset: 0;
-      background: radial-gradient(
-        ellipse var(--shrimp-focus-radius-x) var(--shrimp-focus-radius-y) at var(--shrimp-focus-x) var(--shrimp-focus-y),
-        rgba(255, 255, 255, 0) 0,
-        rgba(255, 255, 255, 0) 94%,
-        rgba(255, 255, 255, 0.28) 101%,
-        rgba(255, 255, 255, 0.08) 109%,
-        rgba(255, 255, 255, 0) 116%
-      );
-      mix-blend-mode: screen;
-      opacity: 0.9;
     }
 
     .${OUTSIDE_TEXT_CLASS} {
@@ -306,6 +300,7 @@ async function requestCoordinate() {
   updateReadingMode(performance.now());
 
   if (!settings.enabled || !settings.localUrl) {
+    serverCoordinateActive = false;
     applyCoordinate(null);
     return;
   }
@@ -320,6 +315,7 @@ async function requestCoordinate() {
     }
 
     if (!response?.ok) {
+      serverCoordinateActive = false;
       applyCoordinate(resolvePointerCoordinate());
       return;
     }
@@ -327,12 +323,15 @@ async function requestCoordinate() {
     const coordinate = response.coordinate
       ? resolveCoordinate(response.coordinate, settings.coordinateSpace)
       : resolvePointerCoordinate();
+    // 只有接口真的供给了坐标才进入“服务器坐标”模式，否则继续走指针实时跟随
+    serverCoordinateActive = Boolean(response.coordinate);
     applyCoordinate(coordinate);
   } catch (error) {
     if (requestGeneration !== pollingGeneration || !settings.enabled) {
       return;
     }
     console.warn('Coordinate Dimming Lens request failed:', error);
+    serverCoordinateActive = false;
     applyCoordinate(resolvePointerCoordinate());
   }
 }
@@ -513,6 +512,11 @@ function trackPointer() {
 
     updatePointerMotion(event.clientX, event.clientY, now);
     updateReadingMode(now);
+
+    // 指针跟随模式：每次移动立即重绘遮罩，不再等待轮询，消除跟手延迟
+    if (settings.enabled && !serverCoordinateActive) {
+      applyCoordinate(resolvePointerCoordinate(), true);
+    }
   };
 
   window.addEventListener('pointermove', updatePointer, { passive: true, capture: true });
@@ -573,7 +577,7 @@ function resolveFocusGeometry(x, y) {
   };
 }
 
-function applyCoordinate(coordinate) {
+function applyCoordinate(coordinate, immediate = false) {
   const overlay = ensureOverlay();
   if (!overlay) {
     return;
@@ -597,6 +601,15 @@ function applyCoordinate(coordinate) {
   };
 
   overlay.classList.add('shrimp-coordinate-lens--active');
+
+  // 指针跟随模式：直接落到目标坐标、不做缓动，消除拖影与延迟
+  if (immediate) {
+    cancelFocusAnimation();
+    renderedCoordinate = { ...targetCoordinate };
+    applyOverlayVisualState(overlay, renderedCoordinate);
+    updateOutsideTextTint(renderedCoordinate, performance.now(), false);
+    return;
+  }
 
   if (!renderedCoordinate) {
     renderedCoordinate = { ...targetCoordinate };
@@ -672,8 +685,12 @@ function applyOverlayVisualState(overlay, coordinate) {
   const stops = resolveFeatherStops(radiusX, radiusY, feather);
   const visualState = resolveModeAdjustedVisualState();
 
+  // 聚光层整体下移 safeTop，焦点坐标同步减去 safeTop，保证视觉焦点仍跟随指针
+  const safeTop = TOP_SAFE_INSET_PX;
+
+  overlay.style.setProperty('--shrimp-safe-top', `${safeTop}px`);
   overlay.style.setProperty('--shrimp-focus-x', `${Math.round(coordinate.x)}px`);
-  overlay.style.setProperty('--shrimp-focus-y', `${Math.round(coordinate.y)}px`);
+  overlay.style.setProperty('--shrimp-focus-y', `${Math.round(coordinate.y - safeTop)}px`);
   overlay.style.setProperty('--shrimp-focus-radius-x', `${Math.round(radiusX)}px`);
   overlay.style.setProperty('--shrimp-focus-radius-y', `${Math.round(radiusY)}px`);
   overlay.style.setProperty('--shrimp-focus-inner-stop', `${stops.inner.toFixed(2)}%`);
@@ -878,7 +895,7 @@ function createModeConfig(sourceSettings) {
       movementEpsilonPx: modeSettings.modeMovementEpsilonPx,
       fastSpeedPxPerMs: modeSettings.modeFastSpeedPxPerMs,
       fastResetSpeedPxPerMs: modeSettings.modeFastResetSpeedPxPerMs,
-      scanTriggerMs: modeSettings.modeScanTriggerMs,
+      scanTriggerMs: 0, // 延迟已彻底移除：扫描模式在指针进入快速状态即触发
       scanExitSpeedPxPerMs: modeSettings.modeScanExitSpeedPxPerMs,
       scanExitHoldMs: modeSettings.modeScanExitHoldMs,
       fatigueIdleMs: modeSettings.modeFatigueIdleMs,
@@ -1016,7 +1033,7 @@ function normalizeModeSettings(rawSettings) {
       fastSpeed,
       Math.min(fastSpeed, SETTINGS_DEFAULTS.modeFastResetSpeedPxPerMs)
     ),
-    modeScanTriggerMs: clampNumber(source.modeScanTriggerMs, 200, 8000, SETTINGS_DEFAULTS.modeScanTriggerMs),
+    modeScanTriggerMs: clampNumber(source.modeScanTriggerMs, 0, 8000, SETTINGS_DEFAULTS.modeScanTriggerMs),
     modeScanExitSpeedPxPerMs: clampNumber(
       source.modeScanExitSpeedPxPerMs,
       0.01,
